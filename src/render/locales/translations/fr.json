@@ -1,0 +1,33 @@
+{
+  "genetec": {
+    "title": "Genetec Web Player (preuve de concept)",
+    "cameraCount": "{{count}} caméras",
+    "mode": "Mode du lecteur : {{mode}}",
+    "disabled": "Genetec n'est pas activé pour ce client.",
+    "mosaic": {
+      "layout": "Nombre de cellules"
+    },
+    "player": {
+      "loading": "Chargement..."
+    },
+    "errors": {
+      "tokenExpired": "Le jeton Bearer a expiré, mettez-le à jour.",
+      "forbidden": "Vous n'avez pas accès à cette caméra.",
+      "offline": "La caméra est hors ligne.",
+      "generic": "Impossible de lire la vidéo",
+      "cameras": "Impossible de charger la liste des caméras."
+    },
+    "test": {
+      "title": "Panneau de test",
+      "cameras": "Caméras",
+      "multiplexed": "Multiplexé (connexion partagée)",
+      "debugOverlay": "Superposition de débogage",
+      "startPhase": "Démarrer la phase",
+      "stopPhase": "Arrêter la phase",
+      "exportCsv": "Exporter en CSV",
+      "running": "Phase {{phase}} en cours",
+      "idle": "Aucune phase active",
+      "counters": "Échantillons : {{samples}} · Erreurs : {{errors}} · Reconnexions : {{reconnections}}"
+    }
+  }
+}
