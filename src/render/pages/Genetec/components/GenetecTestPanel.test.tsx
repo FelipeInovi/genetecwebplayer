@@ -1,10 +1,26 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
 import i18n from "@/render/locales/i18n";
 import GenetecTestPanel from "@/render/pages/Genetec/components/GenetecTestPanel";
+import { recordError } from "@/render/pages/Genetec/stats/statsCollector";
 import {
   resetStatsStore,
   useStatsStore
 } from "@/render/pages/Genetec/stats/statsStore";
+import {
+  DEFAULT_TEST_CONFIG,
+  type TestConfig
+} from "@/render/types/genetecMetrics";
+
+const renderPanel = (config: Partial<TestConfig> = {}) => {
+  const onConfigChange = jest.fn();
+  render(
+    <GenetecTestPanel
+      config={{ ...DEFAULT_TEST_CONFIG, ...config }}
+      onConfigChange={onConfigChange}
+    />
+  );
+  return { onConfigChange };
+};
 
 describe("GenetecTestPanel (smoke)", () => {
   beforeAll(() => i18n.changeLanguage("en"));
@@ -12,15 +28,20 @@ describe("GenetecTestPanel (smoke)", () => {
   beforeEach(() => resetStatsStore());
   afterEach(() => useStatsStore.getState().stopPhase());
 
-  it("selects camera count and mode, then starts and stops a phase", () => {
-    render(<GenetecTestPanel />);
+  it("reports camera count and mode changes to the page", () => {
+    const { onConfigChange } = renderPanel();
     fireEvent.click(screen.getByRole("button", { name: "16" }));
+    expect(onConfigChange).toHaveBeenLastCalledWith({ cameraCount: 16 });
     fireEvent.click(screen.getByLabelText(/multiplexed/i));
-    expect(useStatsStore.getState().cameraCount).toBe(16);
-    expect(useStatsStore.getState().multiplexed).toBe(true);
+    expect(onConfigChange).toHaveBeenLastCalledWith({ multiplexed: true });
+  });
 
+  it("starts a phase with the configured count and mode, then stops it", () => {
+    renderPanel({ cameraCount: 16, multiplexed: true });
     fireEvent.click(screen.getByRole("button", { name: /start phase/i }));
-    expect(useStatsStore.getState().activePhaseId).not.toBeNull();
+    const store = useStatsStore.getState();
+    expect(store.activePhaseId).not.toBeNull();
+    expect(store.phases[0]).toMatchObject({ cameraCount: 16, multiplexed: true });
     expect(screen.getByRole("button", { name: /stop phase/i })).toBeEnabled();
 
     fireEvent.click(screen.getByRole("button", { name: /stop phase/i }));
@@ -28,14 +49,14 @@ describe("GenetecTestPanel (smoke)", () => {
     expect(screen.getByRole("button", { name: /export csv/i })).toBeEnabled();
   });
 
-  it("toggles the debug overlay flag", () => {
-    render(<GenetecTestPanel />);
+  it("reports the debug overlay toggle to the page", () => {
+    const { onConfigChange } = renderPanel();
     fireEvent.click(screen.getByLabelText(/debug overlay/i));
-    expect(useStatsStore.getState().debugOverlay).toBe(true);
+    expect(onConfigChange).toHaveBeenCalledWith({ debugOverlay: true });
   });
 
   it("shows the derived counters from the store, not raw arrays (C3)", () => {
-    render(<GenetecTestPanel />);
+    renderPanel();
     act(() =>
       useStatsStore.setState({
         sampleCount: 7,
@@ -57,11 +78,16 @@ describe("GenetecTestPanel (smoke)", () => {
       return "blob:x";
     });
     URL.revokeObjectURL = jest.fn();
-    render(<GenetecTestPanel />);
+    renderPanel();
     const store = useStatsStore.getState();
     act(() => {
-      store.startPhase();
-      store.recordError("cam-a", { code: 1, isFatal: false, message: "m" });
+      store.startPhase({ cameraCount: 4, multiplexed: false });
+      recordError("cam-a", {
+        code: 1,
+        isFatal: false,
+        message: "m",
+        source: "gwp-error"
+      });
       store.stopPhase();
     });
     fireEvent.click(screen.getByRole("button", { name: /export csv/i }));

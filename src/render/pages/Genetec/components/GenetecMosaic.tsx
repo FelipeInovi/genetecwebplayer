@@ -1,30 +1,39 @@
+import { useMemo } from "react";
 import { Box } from "@mui/material";
 import { GenetecServiceContext } from "@/render/pages/Genetec/components/GenetecServiceContext";
 import GenetecPlayerCell from "@/render/pages/Genetec/components/GenetecPlayerCell";
 import { getGridColumns } from "@/render/pages/Genetec/components/getGridColumns";
 import { useMediaGatewayService } from "@/render/pages/Genetec/hooks/useMediaGatewayService";
-import { useStatsStore } from "@/render/pages/Genetec/stats/statsStore";
 import type { GenetecCamera } from "@/render/types/genetec";
 
 interface Props {
   cameras: GenetecCamera[];
+  /** How many cameras to show. Default: all. */
+  cameraCount?: number;
+  /** true: one shared IMediaGatewayService per mosaic (startWithService). */
+  multiplexed?: boolean;
+  debugOverlay?: boolean;
+  /** Change it to remount the cells (e.g. so first-frame times belong to a test phase). */
+  runKey?: number;
 }
 
-/**
- * Cell count, multiplexed mode and the remount key come from the test store
- * (GenetecTestPanel). Multiplexed: one shared IMediaGatewayService per mosaic.
- */
-const GenetecMosaic = ({ cameras }: Props) => {
-  const cameraCount = useStatsStore((s) => s.cameraCount);
-  const multiplexed = useStatsStore((s) => s.multiplexed);
-  const runKey = useStatsStore((s) => s.runKey);
+const GenetecMosaic = ({
+  cameras,
+  cameraCount = cameras.length,
+  multiplexed = false,
+  debugOverlay = false,
+  runKey = 0
+}: Props) => {
   const service = useMediaGatewayService(multiplexed, cameras);
+  const value = useMemo(
+    () => ({ ...service, debugOverlay }),
+    [service, debugOverlay]
+  );
   const visible = cameras.slice(0, cameraCount);
 
   return (
-    <GenetecServiceContext.Provider value={service}>
+    <GenetecServiceContext.Provider value={value}>
       <Box
-        // Remount on phase start so first-frame times belong to the phase.
         key={runKey}
         sx={{
           display: "grid",

@@ -1,12 +1,9 @@
 {
   "genetec": {
-    "title": "Genetec Web Player (proof of concept)",
+    "title": "Genetec Web Player",
     "cameraCount": "{{count}} cameras",
     "mode": "Player mode: {{mode}}",
     "disabled": "Genetec is not enabled for this tenant.",
-    "mosaic": {
-      "layout": "Number of cells"
-    },
     "player": {
       "loading": "Loading..."
     },

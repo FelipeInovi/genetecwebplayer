@@ -5,10 +5,12 @@ import {
   escapeCsvField,
   toCsv
 } from "@/render/pages/Genetec/stats/csv";
+import type { ErrorSource } from "@/render/types/genetec";
 import type {
+  ErrorEvent,
   PhaseSummary,
-  StreamEvent,
-  StatsSample
+  StatsSample,
+  StreamStatusEvent
 } from "@/render/types/genetecMetrics";
 
 describe("escapeCsvField", () => {
@@ -105,7 +107,7 @@ describe("buildSummaryCsv", () => {
 });
 
 describe("buildEventsCsv", () => {
-  const event = (over: Partial<StreamEvent> = {}): StreamEvent => ({
+  const event = (over: Partial<ErrorEvent> = {}): ErrorEvent => ({
     kind: "error",
     timestamp: Date.UTC(2026, 0, 2, 3, 4, 5),
     seq: 7,
@@ -126,9 +128,16 @@ describe("buildEventsCsv", () => {
   });
 
   it("puts the stream status in the status column and leaves code empty", () => {
-    const row = lines(
-      buildEventsCsv([event({ kind: "streamStatus", code: 5, isFatal: false, source: undefined })])
-    )[1];
+    const status: StreamStatusEvent = {
+      kind: "streamStatus",
+      timestamp: Date.UTC(2026, 0, 2, 3, 4, 5),
+      seq: 7,
+      phaseId: "phase-1",
+      cameraId: "cam-1",
+      code: 5,
+      message: "Streaming"
+    };
+    const row = lines(buildEventsCsv([status]))[1];
     expect(row).toBe("2026-01-02T03:04:05.000Z,7,phase-1,cam-1,streamStatus,,,false,5");
   });
 
@@ -140,7 +149,7 @@ describe("buildEventsCsv", () => {
   it.each(["=SUM(1)", "+1", "-1", "@cmd"])(
     "neutralizes formula injection in %s with a single quote",
     (value) => {
-      const csv = buildEventsCsv([event({ cameraId: value, source: value })]);
+      const csv = buildEventsCsv([event({ cameraId: value, source: value as ErrorSource })]);
       expect(csv).not.toContain(`,${value}`);
       expect(csv).toContain(`'${value}`);
     }

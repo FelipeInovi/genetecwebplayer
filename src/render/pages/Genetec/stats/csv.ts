@@ -151,15 +151,16 @@ export const buildEventsCsv = (events: StreamEvent[]): string =>
     EVENT_HEADER,
     events.map((e) => {
       const isStatus = e.kind === "streamStatus";
+      const isError = e.kind === "error";
       return [
         iso(e.timestamp),
         e.seq,
         neutralizeFormula(e.phaseId),
         neutralizeFormula(e.cameraId),
         neutralizeFormula(e.kind),
-        neutralizeFormula(e.source),
+        neutralizeFormula(isError ? e.source : undefined),
         isStatus ? null : e.code,
-        e.isFatal,
+        isError && e.isFatal,
         isStatus ? e.code : null
       ];
     })

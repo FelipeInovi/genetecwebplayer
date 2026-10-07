@@ -9,6 +9,7 @@ import {
   Typography
 } from "@mui/material";
 import { useTranslation } from "react-i18next";
+import { useShallow } from "zustand/react/shallow";
 import {
   buildEventsCsv,
   buildSamplesCsv,
@@ -17,24 +18,35 @@ import {
 } from "@/render/pages/Genetec/stats/csv";
 import {
   getEvents,
-  getSamples,
-  useStatsStore
-} from "@/render/pages/Genetec/stats/statsStore";
-import { CAMERA_COUNTS } from "@/render/types/genetecMetrics";
+  getSamples
+} from "@/render/pages/Genetec/stats/statsCollector";
+import { useStatsStore } from "@/render/pages/Genetec/stats/statsStore";
+import {
+  CAMERA_COUNTS,
+  type CameraCount,
+  type TestConfig
+} from "@/render/types/genetecMetrics";
 
-const GenetecTestPanel = () => {
+interface Props {
+  config: TestConfig;
+  onConfigChange: (patch: Partial<TestConfig>) => void;
+}
+
+const GenetecTestPanel = ({ config, onConfigChange }: Props) => {
   const { t } = useTranslation();
-  const cameraCount = useStatsStore((s) => s.cameraCount);
-  const multiplexed = useStatsStore((s) => s.multiplexed);
-  const debugOverlay = useStatsStore((s) => s.debugOverlay);
-  const activePhaseId = useStatsStore((s) => s.activePhaseId);
-  const phases = useStatsStore((s) => s.phases);
-  // Derived counters only: raw samples/events are read on demand (export).
-  const sampleCount = useStatsStore((s) => s.sampleCount);
-  const errorCount = useStatsStore((s) => s.errorCount);
-  const reconnectionCount = useStatsStore((s) => s.reconnectionCount);
-  const { setCameraCount, setMultiplexed, setDebugOverlay, startPhase, stopPhase } =
-    useStatsStore.getState();
+  const { cameraCount, multiplexed, debugOverlay } = config;
+  // Phase lifecycle and derived counters only: raw samples/events are read on demand (export).
+  const { activePhaseId, phases, sampleCount, errorCount, reconnectionCount } =
+    useStatsStore(
+      useShallow((s) => ({
+        activePhaseId: s.activePhaseId,
+        phases: s.phases,
+        sampleCount: s.sampleCount,
+        errorCount: s.errorCount,
+        reconnectionCount: s.reconnectionCount
+      }))
+    );
+  const { startPhase, stopPhase } = useStatsStore.getState();
 
   const running = activePhaseId !== null;
 
@@ -57,7 +69,9 @@ const GenetecTestPanel = () => {
           size="small"
           exclusive
           value={cameraCount}
-          onChange={(_, value: number | null) => value && setCameraCount(value)}
+          onChange={(_, value: CameraCount | null) =>
+            value && onConfigChange({ cameraCount: value })
+          }
           aria-label={t("genetec.test.cameras")}
         >
           {CAMERA_COUNTS.map((n) => (
@@ -71,7 +85,7 @@ const GenetecTestPanel = () => {
             <Switch
               checked={multiplexed}
               disabled={running}
-              onChange={(e) => setMultiplexed(e.target.checked)}
+              onChange={(e) => onConfigChange({ multiplexed: e.target.checked })}
             />
           }
           label={t("genetec.test.multiplexed")}
@@ -80,12 +94,17 @@ const GenetecTestPanel = () => {
           control={
             <Switch
               checked={debugOverlay}
-              onChange={(e) => setDebugOverlay(e.target.checked)}
+              onChange={(e) => onConfigChange({ debugOverlay: e.target.checked })}
             />
           }
           label={t("genetec.test.debugOverlay")}
         />
-        <Button variant="contained" size="small" disabled={running} onClick={startPhase}>
+        <Button
+          variant="contained"
+          size="small"
+          disabled={running}
+          onClick={() => startPhase({ cameraCount, multiplexed })}
+        >
           {t("genetec.test.startPhase")}
         </Button>
         <Button variant="outlined" size="small" disabled={!running} onClick={stopPhase}>

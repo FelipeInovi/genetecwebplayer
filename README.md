@@ -112,7 +112,7 @@ playing; only failures before the first `Streaming` fail the cell.
 ## Metrics and CSV
 
 The test panel (top of the page) picks camera count (1/4/8/16/32) and the
-multiplexed toggle. "Start phase" remounts the mosaic (so first-frame times
+multiplexed toggle (kept as page state, not in the stats store). "Start phase" remounts the mosaic (so first-frame times
 belong to the phase) and polls `getPlayerStats()` of every live player every
 1 s (mock players generate plausible fake stats). "Stop phase" ends it. The
 debug overlay switch calls `showDebugOverlay` on every player.
@@ -158,15 +158,80 @@ data on demand. Leaving the page stops the active phase and its polling timer.
   mosaic, shared through React context; cells call `startWithService`. The
   service is released when the mosaic unmounts or the mode changes.
 
+## Architecture
+
+The player feature is decoupled from the load-test tooling through one
+optional seam, `GenetecPlayerTelemetry` (`types/genetec.ts`): `onStartRequested`,
+`onError`, `onStreamStatus` and `registerStatsSource` (returns its unregister
+function). It is provided through `GenetecTelemetryContext` and defaults to a
+no-op, so the player hooks and components never import `stats/`. Only
+`GenetecPage` (the test harness) provides the real implementation
+(`stats/statsTelemetry.ts`). UI settings of the harness (camera count,
+multiplexed, debug overlay) are page state; the debug overlay reaches the
+players through `GenetecServiceContext`.
+
+- `hooks/useGenetecPlayer.ts`: thin hook (reducer + one effect).
+- `hooks/playerReducer.ts`: `idle | loading | playing | error` state machine.
+- `hooks/playerSession.ts`: lifecycle of one start attempt (`cancelled || failed`
+  guard, idempotent release, deadline).
+- `hooks/attachPlayer.ts`: `attachGwpPlayer` and `attachMockPlayer`.
+- `stats/statsCollector.ts`: plain module (player registry, polling, raw arrays);
+  `stats/statsStore.ts`: zustand store with phase lifecycle and derived counters.
+
+Mock branches are marked with a single `// POC-only:` comment convention.
+
 ## Migration map to broadlineavida
 
-| POC | broadlineavida |
+Target conventions: feature-flat (`pages/`, `components/`, `service/`, `types/`,
+`config/`), no DDD layers, services are plain typed async functions on the shared
+axios instance consumed through TanStack Query. The telemetry provider is
+OPTIONAL in the target: without it the player runs with the no-op default.
+
+### Migrate
+
+| POC source | broadlineavida target |
 | --- | --- |
-| `src/render/pages/Genetec/**` | `src/render/pages/Genetec/**` (lazy-route it) |
-| `src/render/service/genetec/**` | `src/render/service/genetec/**` |
-| `src/render/service/errors.ts` | `src/render/service/errors.ts` |
-| `src/render/types/genetec.ts` | `src/render/types/genetec.ts` |
-| `src/render/service/apiLV.ts` | not copied: use the existing `apiLVl.ts` (change import in `genetecService.ts`; handle 401/403 mapping there or in the hooks) |
-| `src/render/config/poc.config.ts` | tenant config (`mv.config.ts`): `genetecEnabled`, `mediaGatewayUrl` |
-| `src/render/locales/translations/*.json` `genetec` section | merge into the global `es/en/fr.json` |
-| `src/render/config/env.ts` | drop; read `import.meta.env` directly |
+| `src/render/pages/Genetec/components/GenetecMosaic.tsx`, `GenetecPlayerCell.tsx`, `GenetecServiceContext.ts`, `GenetecTelemetryContext.ts`, `getGridColumns.ts` (+ tests) | `src/render/pages/Genetec/components/` |
+| `src/render/pages/Genetec/hooks/{useGenetecPlayer,playerReducer,playerSession,attachPlayer,instrumentTokenRetriever,streamedCameras,loadGwpScript,useMediaGatewayService,useGenetecCameras}.ts` (+ tests) | `src/render/pages/Genetec/hooks/` |
+| `src/render/pages/Genetec/GenetecPage.tsx` | `src/render/pages/Genetec/GenetecPage.tsx`, trimmed: keep camera list, loading/error alerts, title and `GenetecMosaic`; drop `GenetecTestPanel`, the telemetry provider, test-config state and `runKey` |
+| `src/render/service/genetec/{genetecService,mediaEndpoint,tokenRetriever}.ts` (+ tests) | `src/render/service/genetec/`; in `genetecService.ts` import `apiLV` from `service/apiLVl.ts` and delete the `// POC-only:` mock branches |
+| `src/render/service/errors.ts` (`TokenExpiredError`, `GenetecForbiddenError`, `GwpPlayerError`, `CameraOfflineError`, `toError`) | `src/render/service/errors.ts` (merge with existing exports) |
+| `src/render/types/genetec.ts` | `src/render/types/genetec.ts` (split into `types/genetec*.ts` if preferred) |
+| `src/render/config/poc.config.ts` fields | add to `config/<tenant>.config.ts`: `genetecEnabled`, `mediaGatewayUrl`, `startTimeoutMs` (default 30000); `genetecPlayerMode` and `useMockApi` only if the mock player is kept. `attachPlayer.ts`, `useGenetecPlayer.ts` and `useMediaGatewayService.ts` import the POC config: point them to the tenant config |
+| `genetec` section of `src/render/locales/translations/{es,en,fr}.json`: `title`, `cameraCount`, `disabled`, `player.loading`, `errors.*` | `src/render/locales/translations/{es,en,fr}.json` (do NOT copy `genetec.test.*`; copy `genetec.mode` only if the page keeps the mode line) |
+| route | `routes/LazyPages.tsx` (lazy `GenetecPage`) and `routes/AppRoutes.tsx` wrapped in `RouteAccess` with `allowedProjects={["MV"]}` |
+| navigation | `components/Header/BtnsHeader.tsx` |
+
+Backend contract: `GET /genetec/cameras` and `POST /genetec/token`. Use
+broadlineavida's `apiLV` from `service/apiLVl.ts`, not the POC `apiLV`. Its 401
+interceptor wipes the session, so the backend MUST return 403 (not 401) for
+Genetec access errors (the POC proxy already does this: gateway 401/403 => 403).
+
+### Do NOT migrate (POC-only)
+
+| POC path | Why |
+| --- | --- |
+| `server/` | local token proxy for the live test |
+| `src/render/pages/Genetec/stats/**` (collector, store, telemetry, metrics, csv) | load-test tooling; also `types/genetecMetrics.ts` |
+| `src/render/pages/Genetec/components/GenetecTestPanel.tsx` (+ test) | load-test UI |
+| `src/render/pages/Genetec/components/MockPlayer.tsx` (+ test) | canvas simulator; OPTIONAL: keep it (with `attachMockPlayer` and `genetecPlayerMode`) only if a mock mode is wanted in the target, otherwise delete it and the mock branch in `useGenetecPlayer.ts`/`useMediaGatewayService.ts` |
+| `src/render/service/genetec/mocks.ts` | mock cameras/tokens |
+| `src/render/config/buildGuard.ts`, `devToken.ts`, `env.ts` | dev bearer token plumbing; read `import.meta.env` directly if needed |
+| `src/render/service/apiLV.ts` | replaced by broadlineavida's `apiLVl.ts` |
+| `src/test/envStub.ts`, `.env.example`, `docs/genetec/` | harness and notes |
+
+## Open verification items (needs real gwp.d.ts)
+
+The GWP typings are hand-written from the docs. Check each against
+`<MG>/media/v2/files/gwp.d.ts` once a real Media Gateway is available:
+
+| Location | Open question |
+| --- | --- |
+| `types/genetec.ts` (GWP typings header) | Whole hand-written GWP typing set |
+| `types/genetec.ts` `StreamingConnectionStatus` | Documented values only; the wiki table is incomplete |
+| `types/genetec.ts` `GwpTimeSpan` | TimeSpan representation is not documented |
+| `types/genetec.ts` `IPlayerStats` | Field types of the numeric/nullable fields |
+| `types/genetec.ts` `IMediaGatewayService.dispose` | No documented dispose; called defensively if present |
+| `types/genetec.ts` `GwpPlayer.getPlayerStats` | Documented as `Promise<IPlayerStats>` (original brief assumed sync) |
+| `stats/metrics.ts` `timeSpanToMs` | Accepts several plausible shapes; numbers assumed to be ms |
+| `hooks/useMediaGatewayService.ts` `disposeService` | Same optional `dispose` as above |

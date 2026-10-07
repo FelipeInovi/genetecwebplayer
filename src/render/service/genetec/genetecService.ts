@@ -10,9 +10,11 @@ import type {
   GenetecTokenResponse
 } from "@/render/types/genetec";
 
+// POC-only: simulated latency of the mock backend.
 const MOCK_DELAY_MS = 150;
 
 export const getGenetecCameras = async (): Promise<GenetecCamera[]> => {
+  // POC-only: mock backend (drop this branch when migrating).
   if (config.useMockApi) {
     await delay(MOCK_DELAY_MS);
     return buildMockCameras();
@@ -24,6 +26,7 @@ export const getGenetecCameras = async (): Promise<GenetecCamera[]> => {
 export const getGenetecToken = async (
   cameraId: string
 ): Promise<GenetecTokenResponse> => {
+  // POC-only: mock backend (drop this branch when migrating).
   if (config.useMockApi) {
     await delay(MOCK_DELAY_MS);
     return buildMockToken();

@@ -13,6 +13,8 @@ export interface GenetecServiceValue {
    * concurrency cap is global instead of per cell. Absent: cells build their own.
    */
   tokenRetriever?: GwpGetTokenFct;
+  /** Shows the GWP debug overlay on every player. Default: off. */
+  debugOverlay?: boolean;
 }
 
 /** Default = individual mode: every cell opens its own connection via start(). */

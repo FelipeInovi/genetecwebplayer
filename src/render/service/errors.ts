@@ -30,3 +30,7 @@ export class CameraOfflineError extends Error {
     this.name = "CameraOfflineError";
   }
 }
+
+/** Normalizes anything thrown or rejected into an Error. */
+export const toError = (e: unknown): Error =>
+  e instanceof Error ? e : new Error(String(e));

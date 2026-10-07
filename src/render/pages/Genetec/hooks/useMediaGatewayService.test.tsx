@@ -1,12 +1,24 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
-import poc from "@/render/config/poc.config";
-import { loadGwpScript } from "@/render/pages/Genetec/hooks/loadGwpScript";
-import { useMediaGatewayService } from "@/render/pages/Genetec/hooks/useMediaGatewayService";
+import { ReactNode } from "react";
 import {
-  getEvents,
+  act,
+  renderHook as rtlRenderHook,
+  waitFor,
+  type RenderHookOptions
+} from "@testing-library/react";
+import poc from "@/render/config/poc.config";
+import { GenetecTelemetryContext } from "@/render/pages/Genetec/components/GenetecTelemetryContext";
+import { loadGwpScript } from "@/render/pages/Genetec/hooks/loadGwpScript";
+import {
+  markStreamed,
+  resetStreamed
+} from "@/render/pages/Genetec/hooks/streamedCameras";
+import { useMediaGatewayService } from "@/render/pages/Genetec/hooks/useMediaGatewayService";
+import { getEvents } from "@/render/pages/Genetec/stats/statsCollector";
+import {
   resetStatsStore,
   useStatsStore
 } from "@/render/pages/Genetec/stats/statsStore";
+import { statsTelemetry } from "@/render/pages/Genetec/stats/statsTelemetry";
 import { getGenetecToken } from "@/render/service/genetec/genetecService";
 import type { GenetecCamera } from "@/render/types/genetec";
 
@@ -16,6 +28,19 @@ jest.mock("@/render/service/genetec/genetecService", () => ({
 jest.mock("@/render/pages/Genetec/hooks/loadGwpScript", () => ({
   loadGwpScript: jest.fn()
 }));
+
+const renderHook = <Result, Props>(
+  callback: (props: Props) => Result,
+  options?: RenderHookOptions<Props>
+) =>
+  rtlRenderHook(callback, {
+    ...options,
+    wrapper: ({ children }: { children: ReactNode }) => (
+      <GenetecTelemetryContext.Provider value={statsTelemetry}>
+        {children}
+      </GenetecTelemetryContext.Provider>
+    )
+  });
 
 const cam = (n: number): GenetecCamera => ({
   id: `cam-${n}`,
@@ -138,7 +163,8 @@ describe("useMediaGatewayService", () => {
 
     beforeEach(() => {
       resetStatsStore();
-      useStatsStore.getState().startPhase();
+      resetStreamed();
+      useStatsStore.getState().startPhase({ cameraCount: 4, multiplexed: false });
     });
     afterEach(() => useStatsStore.getState().stopPhase());
 
@@ -156,7 +182,7 @@ describe("useMediaGatewayService", () => {
 
     it("records a failure after Streaming as token-renewal", async () => {
       (getGenetecToken as jest.Mock).mockRejectedValue(new Error("down"));
-      useStatsStore.getState().recordStreamStatus("cam-2", 5, "");
+      markStreamed("cam-2");
       const retrieve = await retrieverOfService();
       await expect(retrieve("guid-2")).rejects.toThrow("down");
       const errors = getEvents().filter((e) => e.kind === "error");

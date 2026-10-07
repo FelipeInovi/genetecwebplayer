@@ -1,21 +1,34 @@
 import { ReactNode, useRef } from "react";
-import { act, render, renderHook, waitFor } from "@testing-library/react";
+import {
+  act,
+  render,
+  renderHook as rtlRenderHook,
+  waitFor,
+  type RenderHookOptions
+} from "@testing-library/react";
 import poc from "@/render/config/poc.config";
 import {
   GenetecServiceContext,
   GenetecServiceValue
 } from "@/render/pages/Genetec/components/GenetecServiceContext";
+import { GenetecTelemetryContext } from "@/render/pages/Genetec/components/GenetecTelemetryContext";
 import { useGenetecPlayer } from "@/render/pages/Genetec/hooks/useGenetecPlayer";
 import { useMediaGatewayService } from "@/render/pages/Genetec/hooks/useMediaGatewayService";
 import {
   getEvents,
-  getSamples,
+  getSamples
+} from "@/render/pages/Genetec/stats/statsCollector";
+import {
   resetStatsStore,
   useStatsStore
 } from "@/render/pages/Genetec/stats/statsStore";
+import { statsTelemetry } from "@/render/pages/Genetec/stats/statsTelemetry";
 import { getGenetecToken } from "@/render/service/genetec/genetecService";
 import { loadGwpScript } from "@/render/pages/Genetec/hooks/loadGwpScript";
-import type { GenetecCamera } from "@/render/types/genetec";
+import type {
+  GenetecCamera,
+  GenetecPlayerTelemetry
+} from "@/render/types/genetec";
 
 jest.mock("@/render/service/genetec/genetecService", () => ({
   getGenetecToken: jest.fn()
@@ -33,6 +46,20 @@ const camera: GenetecCamera = {
   lat: 6.24,
   lng: -75.58,
   ptz: false
+};
+
+/** The stats module is the real telemetry in the harness: wire it like GenetecPage does. */
+const renderHook = <Result, Props>(
+  callback: (props: Props) => Result,
+  options?: RenderHookOptions<Props>
+) => {
+  const Inner = options?.wrapper;
+  const Wrapper = ({ children }: { children: ReactNode }) => (
+    <GenetecTelemetryContext.Provider value={statsTelemetry}>
+      {Inner ? <Inner>{children}</Inner> : children}
+    </GenetecTelemetryContext.Provider>
+  );
+  return rtlRenderHook(callback, { ...options, wrapper: Wrapper });
 };
 
 const makeRef = () => ({ current: document.createElement("div") });
@@ -83,7 +110,7 @@ describe("useGenetecPlayer (mock mode)", () => {
       useGenetecPlayer(ref, camera)
     );
     await waitFor(() => expect(result.current.status).toBe("playing"));
-    useStatsStore.getState().startPhase();
+    useStatsStore.getState().startPhase({ cameraCount: 4, multiplexed: false });
     await act(async () => {
       await useStatsStore.getState().pollOnce();
     });
@@ -282,7 +309,7 @@ describe("useGenetecPlayer (gwp mode, individual)", () => {
   });
 
   it("logs errors and stream statuses into the active phase", async () => {
-    useStatsStore.getState().startPhase();
+    useStatsStore.getState().startPhase({ cameraCount: 4, multiplexed: false });
     mount();
     await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
     act(() => ctx.events.onStreamStatusChanged.emit({ state: 5, value: "" }));
@@ -303,15 +330,34 @@ describe("useGenetecPlayer (gwp mode, individual)", () => {
   });
 
   it("exposes the player for stats polling and applies the debug overlay flag", async () => {
-    useStatsStore.getState().startPhase();
-    mount();
+    useStatsStore.getState().startPhase({ cameraCount: 4, multiplexed: false });
+    let debugOverlay = false;
+    const Wrapper = ({ children }: { children: ReactNode }) => (
+      <GenetecServiceContext.Provider
+        value={{
+          multiplexed: false,
+          service: null,
+          ready: true,
+          error: null,
+          debugOverlay
+        }}
+      >
+        {children}
+      </GenetecServiceContext.Provider>
+    );
+    const ref = makeRef();
+    const { rerender } = renderHook(() => useGenetecPlayer(ref, camera), {
+      wrapper: Wrapper
+    });
     await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
     await act(async () => {
       await useStatsStore.getState().pollOnce();
     });
     expect(ctx.player.getPlayerStats).toHaveBeenCalled();
     expect(getSamples()[0].fps).toBe(25);
-    act(() => useStatsStore.getState().setDebugOverlay(true));
+    expect(ctx.player.showDebugOverlay).not.toHaveBeenCalled();
+    debugOverlay = true;
+    rerender();
     expect(ctx.player.showDebugOverlay).toHaveBeenCalledWith(true);
     useStatsStore.getState().stopPhase();
   });
@@ -464,7 +510,7 @@ describe("useGenetecPlayer (gwp mode, review fixes)", () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       mediaGatewayUrl: "x"
     });
-    useStatsStore.getState().startPhase();
+    useStatsStore.getState().startPhase({ cameraCount: 4, multiplexed: false });
   });
   afterEach(() => {
     useStatsStore.getState().stopPhase();
@@ -713,7 +759,7 @@ describe("useGenetecPlayer (gwp mode, batch 2 review fixes)", () => {
       expiresAt: new Date(Date.now() + 60_000).toISOString(),
       mediaGatewayUrl: "x"
     });
-    useStatsStore.getState().startPhase();
+    useStatsStore.getState().startPhase({ cameraCount: 4, multiplexed: false });
   });
   afterEach(() => {
     useStatsStore.getState().stopPhase();
@@ -848,5 +894,128 @@ describe("useGenetecPlayer (gwp mode, batch 2 review fixes)", () => {
     }
     expect(getGenetecToken).toHaveBeenCalledTimes(8);
     expect(maxActive).toBeLessThanOrEqual(4);
+  });
+});
+
+describe("useGenetecPlayer telemetry seam", () => {
+  const gwp = { buildPlayer: jest.fn() };
+  let ctx: ReturnType<typeof makePlayer>;
+
+  const fakeTelemetry = () => {
+    const off = jest.fn();
+    const telemetry: GenetecPlayerTelemetry = {
+      onStartRequested: jest.fn(),
+      onError: jest.fn(),
+      onStreamStatus: jest.fn(),
+      registerStatsSource: jest.fn(() => off)
+    };
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <GenetecTelemetryContext.Provider value={telemetry}>
+        {children}
+      </GenetecTelemetryContext.Provider>
+    );
+    return { telemetry, off, wrapper };
+  };
+
+  beforeEach(() => {
+    poc.genetecPlayerMode = "gwp";
+    poc.mediaGatewayUrl = "https://mg.test";
+    poc.startTimeoutMs = 30_000;
+    jest.clearAllMocks();
+    ctx = makePlayer();
+    gwp.buildPlayer.mockReset();
+    gwp.buildPlayer.mockReturnValue(ctx.player);
+    (loadGwpScript as jest.Mock).mockReset();
+    (loadGwpScript as jest.Mock).mockResolvedValue(gwp);
+    (getGenetecToken as jest.Mock).mockReset();
+    (getGenetecToken as jest.Mock).mockResolvedValue({
+      token: "tok",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      mediaGatewayUrl: "x"
+    });
+  });
+  afterAll(() => {
+    poc.genetecPlayerMode = "mock";
+  });
+
+  it("plays, fails and releases with no provider (no-op telemetry)", async () => {
+    const ref = makeRef();
+    const { result, unmount } = rtlRenderHook(() =>
+      useGenetecPlayer(ref, camera)
+    );
+    await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+    act(() => ctx.events.onStreamStatusChanged.emit({ state: 5, value: "" }));
+    expect(result.current.status).toBe("playing");
+    act(() =>
+      ctx.events.onErrorStateRaised.emit({
+        errorCode: 9,
+        value: "late",
+        isFatal: true
+      })
+    );
+    expect(result.current.status).toBe("error");
+    unmount();
+    expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports start, status, errors and the stats source to a provided telemetry", async () => {
+    const { telemetry, off, wrapper } = fakeTelemetry();
+    const ref = makeRef();
+    const { unmount } = rtlRenderHook(() => useGenetecPlayer(ref, camera), {
+      wrapper
+    });
+    await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+    expect(telemetry.onStartRequested).toHaveBeenCalledWith("cam-1");
+    expect(telemetry.registerStatsSource).toHaveBeenCalledWith(
+      "cam-1",
+      expect.any(Function)
+    );
+    act(() => ctx.events.onStreamStatusChanged.emit({ state: 5, value: "ok" }));
+    expect(telemetry.onStreamStatus).toHaveBeenCalledWith("cam-1", 5, "ok");
+    act(() =>
+      ctx.events.onErrorStateRaised.emit({
+        errorCode: 9,
+        value: "timeout",
+        isFatal: false
+      })
+    );
+    expect(telemetry.onError).toHaveBeenCalledWith("cam-1", {
+      code: 9,
+      isFatal: false,
+      message: "timeout",
+      source: "gwp-error"
+    });
+    expect(off).not.toHaveBeenCalled();
+    unmount();
+    expect(off).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a fatal start failure exactly once", async () => {
+    const { telemetry, wrapper } = fakeTelemetry();
+    ctx.player.start.mockRejectedValue(new Error("boom"));
+    const ref = makeRef();
+    const { result } = rtlRenderHook(() => useGenetecPlayer(ref, camera), {
+      wrapper
+    });
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(telemetry.onError).toHaveBeenCalledTimes(1);
+    expect(telemetry.onError).toHaveBeenCalledWith("cam-1", {
+      code: 0,
+      isFatal: true,
+      message: "boom",
+      source: "start"
+    });
+  });
+
+  it("reports the mock player as Streaming", async () => {
+    poc.genetecPlayerMode = "mock";
+    const { telemetry, wrapper } = fakeTelemetry();
+    const ref = makeRef();
+    const { result } = rtlRenderHook(() => useGenetecPlayer(ref, camera), {
+      wrapper
+    });
+    await waitFor(() => expect(result.current.status).toBe("playing"));
+    expect(telemetry.onStreamStatus).toHaveBeenCalledWith("cam-1", 5, "mock");
+    expect(telemetry.registerStatsSource).toHaveBeenCalledTimes(1);
   });
 });

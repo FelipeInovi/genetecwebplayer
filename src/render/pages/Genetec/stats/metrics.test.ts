@@ -1,6 +1,8 @@
 import {
   buildSample,
+  countErrors,
   countReconnections,
+  isErrorEvent,
   percentile,
   resolutionToString,
   summarizePhase,
@@ -95,14 +97,24 @@ const ev = (
   timestamp: number,
   kind: StreamEvent["kind"] = "streamStatus",
   isFatal = false
-): StreamEvent => ({
-  kind,
-  timestamp,
-  phaseId: "p1",
-  cameraId,
-  code,
-  isFatal,
-  message: ""
+): StreamEvent => {
+  const base = { timestamp, phaseId: "p1", cameraId, code, message: "" };
+  return kind === "error"
+    ? { ...base, kind, isFatal, source: "gwp-error" }
+    : { ...base, kind };
+};
+
+describe("countErrors", () => {
+  it("counts error events and the fatal subset, ignoring other kinds", () => {
+    const events = [
+      ev("a", 4, 1, "error", true),
+      ev("a", 9, 2, "error", false),
+      ev("a", 5, 3),
+      ev("a", 0, 4, "start-requested")
+    ];
+    expect(countErrors(events)).toEqual({ errorCount: 2, fatalErrorCount: 1 });
+    expect(events.filter(isErrorEvent)).toHaveLength(2);
+  });
 });
 
 describe("countReconnections", () => {

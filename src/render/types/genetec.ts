@@ -21,6 +21,42 @@ export interface GenetecTokenResponse {
 
 export type PlayerStatus = "idle" | "loading" | "playing" | "error";
 
+/** Stable origin of a player failure (CSV / report friendly). */
+export type ErrorSource =
+  | "script-load"
+  | "token"
+  | "token-renewal"
+  | "start"
+  | "start-timeout"
+  | "fatal-status"
+  | "service-build"
+  | "offline"
+  | "gwp-error";
+
+export interface GenetecTelemetryError {
+  code: number;
+  isFatal: boolean;
+  message: string;
+  source: ErrorSource;
+}
+
+/**
+ * Optional observer of the player lifecycle. The player works without one (the
+ * default is a no-op); the load-test harness plugs its stats collector in here.
+ */
+export interface GenetecPlayerTelemetry {
+  /** A cell began its start flow. */
+  onStartRequested: (cameraId: string) => void;
+  onError: (cameraId: string, error: GenetecTelemetryError) => void;
+  /** A StreamingConnectionStatus change (code) with its message. */
+  onStreamStatus: (cameraId: string, code: number, message: string) => void;
+  /** Exposes a live player's stats getter. Returns the unregister function. */
+  registerStatsSource: (
+    cameraId: string,
+    getStats: () => Promise<IPlayerStats>
+  ) => () => void;
+}
+
 /**
  * GWP typings, hand-written from docs/genetec/gwp-reference.md.
  * TODO verify against gwp.d.ts (served at <MG>/media/v2/files/gwp.d.ts).

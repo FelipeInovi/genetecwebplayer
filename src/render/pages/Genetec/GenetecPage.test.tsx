@@ -1,9 +1,9 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import "@/render/locales/i18n";
 import GenetecPage from "@/render/pages/Genetec/GenetecPage";
+import { registerPlayer } from "@/render/pages/Genetec/stats/statsCollector";
 import {
-  registerPlayer,
   resetStatsStore,
   useStatsStore
 } from "@/render/pages/Genetec/stats/statsStore";
@@ -25,6 +25,20 @@ describe("GenetecPage (smoke)", () => {
     expect(await screen.findAllByTestId("player-container")).toHaveLength(4);
   });
 
+  it("resizes the mosaic from the test panel selection", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } }
+    });
+    render(
+      <QueryClientProvider client={client}>
+        <GenetecPage />
+      </QueryClientProvider>
+    );
+    expect(await screen.findAllByTestId("player-container")).toHaveLength(4);
+    fireEvent.click(screen.getByRole("button", { name: "8" }));
+    expect(await screen.findAllByTestId("player-container")).toHaveLength(8);
+  });
+
   it("stops the active phase and its polling timer on unmount", async () => {
     jest.useFakeTimers();
     try {
@@ -38,7 +52,7 @@ describe("GenetecPage (smoke)", () => {
         </QueryClientProvider>
       );
       act(() => {
-        useStatsStore.getState().startPhase();
+        useStatsStore.getState().startPhase({ cameraCount: 4, multiplexed: false });
       });
       const getter = jest.fn().mockResolvedValue({ fps: 25 });
       const off = registerPlayer("cam-x", getter);

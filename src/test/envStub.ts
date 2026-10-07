@@ -1,6 +1,6 @@
 // Jest stand-in for src/render/config/env.ts (which reads import.meta.env).
 // Tests may override values via jest.mock("@/render/config/env", ...).
-import type { AppEnv } from "@/render/config/envTypes";
+import type { AppEnv } from "@/render/config/env";
 
 const env: AppEnv = {
   VITE_API_URL: "http://api.test",

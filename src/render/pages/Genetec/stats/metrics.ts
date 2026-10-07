@@ -2,6 +2,7 @@ import { StreamingConnectionStatus } from "@/render/types/genetec";
 import type { GwpResolution, IPlayerStats } from "@/render/types/genetec";
 import type {
   Aggregate,
+  ErrorEvent,
   PhaseSummary,
   StatsSample,
   StreamEvent,
@@ -208,6 +209,39 @@ const groupByCamera = (samples: StatsSample[]) => {
   return groups;
 };
 
+interface CameraSummary {
+  bandwidthKbps: number;
+  packetsLost: number;
+  framesDropped: number;
+  /** Latest reported first frame render delay. */
+  firstFrameRenderMs: number | null;
+}
+
+const summarizeCamera = (list: StatsSample[]): CameraSummary => {
+  const sorted = [...list].sort((a, b) => a.timestamp - b.timestamp);
+  return {
+    bandwidthKbps: average(present(sorted.map((s) => s.videoBitrateKbps))) ?? 0,
+    // Counters are cumulative per player and may reset: sum positive deltas.
+    packetsLost: sumCounterDeltas(present(sorted.map((s) => s.packetsLost))),
+    framesDropped: sumCounterDeltas(present(sorted.map((s) => s.framesDropped))),
+    firstFrameRenderMs:
+      present(sorted.map((s) => s.firstFrameRenderDelay)).at(-1) ?? null
+  };
+};
+
+export const isErrorEvent = (e: StreamEvent): e is ErrorEvent =>
+  e.kind === "error";
+
+export const countErrors = (
+  events: StreamEvent[]
+): { errorCount: number; fatalErrorCount: number } => {
+  const errors = events.filter(isErrorEvent);
+  return {
+    errorCount: errors.length,
+    fatalErrorCount: errors.filter((e) => e.isFatal).length
+  };
+};
+
 export const summarizePhase = (
   phase: TestPhase,
   allSamples: StatsSample[],
@@ -219,25 +253,12 @@ export const summarizePhase = (
   const events = allEvents.filter((e) => e.phaseId === phase.id);
   const byCamera = groupByCamera(samples);
 
-  let totalBandwidthKbps = 0;
-  let totalPacketsLost = 0;
-  let totalFramesDropped = 0;
-  const firstFrames: number[] = [];
-  byCamera.forEach((list) => {
-    const sorted = [...list].sort((a, b) => a.timestamp - b.timestamp);
-    totalBandwidthKbps += average(present(sorted.map((s) => s.videoBitrateKbps))) ?? 0;
-    // Counters are cumulative per player and may reset: sum positive deltas.
-    totalPacketsLost += sumCounterDeltas(present(sorted.map((s) => s.packetsLost)));
-    totalFramesDropped += sumCounterDeltas(
-      present(sorted.map((s) => s.framesDropped))
-    );
-    const lastFirstFrame = present(
-      sorted.map((s) => s.firstFrameRenderDelay)
-    ).pop();
-    if (lastFirstFrame !== undefined) firstFrames.push(lastFirstFrame);
-  });
+  const perCamera = [...byCamera.values()].map(summarizeCamera);
+  const sumOf = (pick: (c: CameraSummary) => number) =>
+    perCamera.reduce((total, c) => total + pick(c), 0);
+  const firstFrames = present(perCamera.map((c) => c.firstFrameRenderMs));
 
-  const errors = events.filter((e) => e.kind === "error");
+  const { errorCount, fatalErrorCount } = countErrors(events);
   const end = phase.endedAt ?? now;
   const outcomes = streamOutcomes(events, byCamera.keys());
 
@@ -253,12 +274,12 @@ export const summarizePhase = (
     networkLatencyMs: aggregate(present(samples.map((s) => s.networkLatency))),
     playerLatencyMs: aggregate(present(samples.map((s) => s.playerLatency))),
     avgFps: average(present(samples.map((s) => s.fps))),
-    totalBandwidthKbps,
-    totalPacketsLost,
-    totalFramesDropped,
+    totalBandwidthKbps: sumOf((c) => c.bandwidthKbps),
+    totalPacketsLost: sumOf((c) => c.packetsLost),
+    totalFramesDropped: sumOf((c) => c.framesDropped),
     firstFrameRenderMs: { avg: average(firstFrames), max: maxOf(firstFrames) },
-    errorCount: errors.length,
-    fatalErrorCount: errors.filter((e) => e.isFatal).length,
+    errorCount,
+    fatalErrorCount,
     reconnectionCount: countReconnections(events),
     camerasNeverStreamed: outcomes.neverStreamed,
     camerasEndedDisconnected: outcomes.endedDisconnected,

@@ -1,3 +1,5 @@
+import type { ErrorSource } from "@/render/types/genetec";
+
 export type CameraCount = 1 | 4 | 8 | 16 | 32;
 
 export const CAMERA_COUNTS: readonly CameraCount[] = [1, 4, 8, 16, 32];
@@ -30,40 +32,51 @@ export interface StatsSample {
   videoCodec: string | null;
 }
 
-/**
- * - "error": a failure (fatal or not). `source` says where it came from.
- * - "streamStatus": a GWP StreamingConnectionStatus change.
- * - "start-requested": a cell began its start flow (baseline for time to first frame).
- */
-export type StreamEventKind = "error" | "streamStatus" | "start-requested";
-
-/** Stable codes for kind "error" events (CSV / report friendly). */
-export type ErrorSource =
-  | "script-load"
-  | "token"
-  | "token-renewal"
-  | "start"
-  | "start-timeout"
-  | "fatal-status"
-  | "service-build"
-  | "offline"
-  | "gwp-error";
-
-export interface StreamEvent {
-  kind: StreamEventKind;
+interface StreamEventBase {
   /** Epoch ms. */
   timestamp: number;
   phaseId: string;
   cameraId: string;
-  /** Error code or StreamingConnectionStatus value. */
+  /** Error code (kind "error") or StreamingConnectionStatus value (kind "streamStatus"). */
   code: number;
-  isFatal: boolean;
   message: string;
-  /** Only for kind "error". */
-  source?: ErrorSource | string;
   /** Monotonic arrival order: tie-break for events with the same timestamp. */
   seq?: number;
 }
+
+/** A failure (fatal or not). `source` says where it came from. */
+export interface ErrorEvent extends StreamEventBase {
+  kind: "error";
+  isFatal: boolean;
+  source: ErrorSource;
+}
+
+/** A GWP StreamingConnectionStatus change. */
+export interface StreamStatusEvent extends StreamEventBase {
+  kind: "streamStatus";
+}
+
+/** A cell began its start flow (baseline for time to first frame). */
+export interface StartRequestedEvent extends StreamEventBase {
+  kind: "start-requested";
+}
+
+export type StreamEvent = ErrorEvent | StreamStatusEvent | StartRequestedEvent;
+
+export type StreamEventKind = StreamEvent["kind"];
+
+/** Test-panel settings owned by the page (not by the stats store). */
+export interface TestConfig {
+  cameraCount: CameraCount;
+  multiplexed: boolean;
+  debugOverlay: boolean;
+}
+
+export const DEFAULT_TEST_CONFIG: TestConfig = {
+  cameraCount: 4,
+  multiplexed: false,
+  debugOverlay: false
+};
 
 export interface Aggregate {
   avg: number | null;
