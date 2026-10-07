@@ -46,7 +46,7 @@ export type ErrorSource =
   | "start-timeout"
   | "fatal-status"
   | "service-build"
-  | "camera-offline"
+  | "offline"
   | "gwp-error";
 
 export interface StreamEvent {

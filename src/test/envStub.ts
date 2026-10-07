@@ -7,7 +7,8 @@ const env: AppEnv = {
   VITE_DEV_BEARER_TOKEN: "",
   VITE_MEDIA_GATEWAY_URL: "https://mg.test",
   VITE_GENETEC_PLAYER_MODE: "mock",
-  VITE_USE_MOCK_API: "true"
+  VITE_USE_MOCK_API: "true",
+  VITE_START_TIMEOUT_MS: ""
 };
 
 export default env;

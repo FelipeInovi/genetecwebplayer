@@ -5,11 +5,13 @@ import {
   Container,
   Typography
 } from "@mui/material";
+import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import config from "@/render/config/poc.config";
 import GenetecMosaic from "@/render/pages/Genetec/components/GenetecMosaic";
 import GenetecTestPanel from "@/render/pages/Genetec/components/GenetecTestPanel";
 import { useGenetecCameras } from "@/render/pages/Genetec/hooks/useGenetecCameras";
+import { useStatsStore } from "@/render/pages/Genetec/stats/statsStore";
 import {
   GenetecForbiddenError,
   TokenExpiredError
@@ -18,6 +20,9 @@ import {
 const GenetecPage = () => {
   const { t } = useTranslation();
   const { data: cameras = [], isLoading, error } = useGenetecCameras();
+
+  // The polling timer is module-level: it must not outlive the page.
+  useEffect(() => () => useStatsStore.getState().stopPhase(), []);
 
   if (!config.genetecEnabled) {
     return <Alert severity="info">{t("genetec.disabled")}</Alert>;

@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import config from "@/render/config/poc.config";
 import type { GenetecServiceValue } from "@/render/pages/Genetec/components/GenetecServiceContext";
+import { instrumentTokenRetriever } from "@/render/pages/Genetec/hooks/instrumentTokenRetriever";
 import { loadGwpScript } from "@/render/pages/Genetec/hooks/loadGwpScript";
+import { hasCameraStreamed } from "@/render/pages/Genetec/stats/statsStore";
 import { getGenetecToken } from "@/render/service/genetec/genetecService";
 import { getMediaEndpoint } from "@/render/service/genetec/mediaEndpoint";
 import { createTokenRetriever } from "@/render/service/genetec/tokenRetriever";
@@ -9,13 +11,6 @@ import type {
   GenetecCamera,
   IMediaGatewayService
 } from "@/render/types/genetec";
-
-const INDIVIDUAL: GenetecServiceValue = {
-  multiplexed: false,
-  service: null,
-  ready: true,
-  error: null
-};
 
 const disposeService = (service: IMediaGatewayService) => {
   try {
@@ -39,6 +34,16 @@ export const useMediaGatewayService = (
   const guidToId = useRef(new Map<string, string>());
   guidToId.current = new Map(cameras.map((c) => [c.externalId, c.id]));
 
+  // One retriever for the whole page in individual mode: global concurrency cap + one cache.
+  const sharedRetriever = useMemo(
+    () =>
+      createTokenRetriever({
+        fetchToken: getGenetecToken,
+        resolveCameraId: (guid) => guidToId.current.get(guid)
+      }),
+    []
+  );
+
   const [built, setBuilt] = useState<{
     service: IMediaGatewayService | null;
     error: Error | null;
@@ -50,10 +55,12 @@ export const useMediaGatewayService = (
     let current: IMediaGatewayService | null = null;
     setBuilt({ service: null, error: null });
 
-    const retriever = createTokenRetriever({
-      fetchToken: getGenetecToken,
-      resolveCameraId: (guid) => guidToId.current.get(guid)
-    });
+    const resolveCameraId = (guid: string) => guidToId.current.get(guid);
+    // Same retriever path as individual mode; renewal failures are recorded too.
+    const retriever = instrumentTokenRetriever(
+      createTokenRetriever({ fetchToken: getGenetecToken, resolveCameraId }),
+      { resolveCameraId, hasStreamed: hasCameraStreamed }
+    );
 
     loadGwpScript(config.mediaGatewayUrl)
       .then((gwp) =>
@@ -86,13 +93,20 @@ export const useMediaGatewayService = (
   }, [multiplexed, isGwp]);
 
   return useMemo(() => {
-    if (!multiplexed) return INDIVIDUAL;
-    if (!isGwp) return { ...INDIVIDUAL, multiplexed: true };
+    const individual: GenetecServiceValue = {
+      multiplexed: false,
+      service: null,
+      ready: true,
+      error: null,
+      tokenRetriever: sharedRetriever
+    };
+    if (!multiplexed) return individual;
+    if (!isGwp) return { ...individual, multiplexed: true };
     return {
       multiplexed: true,
       service: built.service,
       ready: built.service !== null || built.error !== null,
       error: built.error
     };
-  }, [multiplexed, isGwp, built]);
+  }, [multiplexed, isGwp, built, sharedRetriever]);
 };

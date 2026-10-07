@@ -1,3 +1,4 @@
+import { GenetecForbiddenError, TokenExpiredError } from "@/render/service/errors";
 import { createTokenRetriever } from "@/render/service/genetec/tokenRetriever";
 import type { GenetecTokenResponse } from "@/render/types/genetec";
 
@@ -18,7 +19,19 @@ const build = (
     fetchToken,
     resolveCameraId: (guid) => GUID_TO_ID[guid],
     now,
-    marginMs
+    marginMs,
+    rng: () => 0
+  });
+
+const httpError = (status: number) =>
+  Object.assign(new Error(`HTTP ${status}`), {
+    isAxiosError: true,
+    response: { status }
+  });
+const networkError = () =>
+  Object.assign(new Error("Network Error"), {
+    isAxiosError: true,
+    code: "ERR_NETWORK"
   });
 
 describe("createTokenRetriever", () => {
@@ -93,5 +106,153 @@ describe("createTokenRetriever", () => {
     await retrieve("guid-1");
     await retrieve("guid-1");
     expect(fetchToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("refetches exactly at the boundary expiresAt - margin == now (C7)", async () => {
+    let now = NOW;
+    const fetchToken = jest
+      .fn()
+      .mockResolvedValueOnce(resp("a", 60_000))
+      .mockResolvedValueOnce(resp("b", 60_000));
+    const retrieve = build(fetchToken, () => now);
+    await retrieve("guid-1");
+    now = NOW + 60_000 - 10_000 - 1;
+    await expect(retrieve("guid-1")).resolves.toBe("a");
+    now = NOW + 60_000 - 10_000;
+    await expect(retrieve("guid-1")).resolves.toBe("b");
+  });
+
+  it("gives every concurrent caller the in-flight rejection, then refetches (C7)", async () => {
+    const fetchToken = jest
+      .fn()
+      .mockRejectedValueOnce(new TokenExpiredError())
+      .mockResolvedValueOnce(resp("ok", 60_000));
+    const retrieve = build(fetchToken);
+    const results = await Promise.allSettled([
+      retrieve("guid-1"),
+      retrieve("guid-1"),
+      retrieve("guid-1")
+    ]);
+    expect(results.map((r) => r.status)).toEqual([
+      "rejected",
+      "rejected",
+      "rejected"
+    ]);
+    expect(fetchToken).toHaveBeenCalledTimes(1);
+    await expect(retrieve("guid-1")).resolves.toBe("ok");
+    expect(fetchToken).toHaveBeenCalledTimes(2);
+  });
+
+  describe("refresh jitter (C4)", () => {
+    it("adds a per-camera random 0..10s on top of the margin", async () => {
+      let now = NOW;
+      const rng = jest.fn().mockReturnValueOnce(1).mockReturnValueOnce(0);
+      const fetchToken = jest.fn().mockResolvedValue(resp("t", 60_000));
+      const retrieve = createTokenRetriever({
+        fetchToken,
+        resolveCameraId: (g) => GUID_TO_ID[g],
+        now: () => now,
+        marginMs: 10_000,
+        rng
+      });
+      await retrieve("guid-1"); // margin 10s + 10s jitter => refetch at +40s
+      await retrieve("guid-2"); // margin 10s + 0 => refetch at +50s
+      fetchToken.mockClear();
+      now = NOW + 39_999;
+      await retrieve("guid-1");
+      await retrieve("guid-2");
+      expect(fetchToken).not.toHaveBeenCalled();
+      now = NOW + 40_000;
+      await retrieve("guid-1");
+      await retrieve("guid-2");
+      expect(fetchToken.mock.calls).toEqual([["cam-1"]]);
+    });
+  });
+
+  describe("concurrency cap (C4)", () => {
+    it("runs at most maxConcurrent fetches and queues the rest", async () => {
+      const resolvers: Array<(r: GenetecTokenResponse) => void> = [];
+      const fetchToken = jest.fn(
+        () => new Promise<GenetecTokenResponse>((r) => resolvers.push(r))
+      );
+      const retrieve = createTokenRetriever({
+        fetchToken,
+        resolveCameraId: (g) => g.replace("guid", "cam"),
+        now: () => NOW,
+        maxConcurrent: 2,
+        rng: () => 0
+      });
+      const all = ["guid-1", "guid-2", "guid-3", "guid-4"].map((g) => retrieve(g));
+      await Promise.resolve();
+      expect(fetchToken).toHaveBeenCalledTimes(2);
+      resolvers[0](resp("t1", 60_000));
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(fetchToken).toHaveBeenCalledTimes(3);
+      resolvers[1](resp("t2", 60_000));
+      resolvers[2](resp("t3", 60_000));
+      await new Promise((r) => setTimeout(r, 0));
+      resolvers[3](resp("t4", 60_000));
+      await expect(Promise.all(all)).resolves.toEqual(["t1", "t2", "t3", "t4"]);
+    });
+
+    it("defaults to 4 concurrent fetches", async () => {
+      const fetchToken = jest.fn(() => new Promise<GenetecTokenResponse>(() => undefined));
+      const retrieve = createTokenRetriever({
+        fetchToken,
+        resolveCameraId: (g) => g,
+        now: () => NOW
+      });
+      for (let i = 0; i < 6; i += 1) void retrieve(`g${i}`);
+      await Promise.resolve();
+      expect(fetchToken).toHaveBeenCalledTimes(4);
+    });
+  });
+
+  describe("retry with backoff (C4)", () => {
+    beforeEach(() => jest.useFakeTimers());
+    afterEach(() => jest.useRealTimers());
+
+    it("retries a network error after 500ms and then succeeds", async () => {
+      const fetchToken = jest
+        .fn()
+        .mockRejectedValueOnce(networkError())
+        .mockResolvedValueOnce(resp("ok", 60_000));
+      const p = build(fetchToken)("guid-1");
+      await jest.advanceTimersByTimeAsync(499);
+      expect(fetchToken).toHaveBeenCalledTimes(1);
+      await jest.advanceTimersByTimeAsync(1);
+      await expect(p).resolves.toBe("ok");
+      expect(fetchToken).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([502, 503, 504])("retries HTTP %i twice (500ms then 1500ms) and gives up", async (status) => {
+      const fetchToken = jest.fn().mockRejectedValue(httpError(status));
+      const p = build(fetchToken)("guid-1");
+      const settled = p.catch((e: unknown) => e);
+      await jest.advanceTimersByTimeAsync(500);
+      expect(fetchToken).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(1499);
+      expect(fetchToken).toHaveBeenCalledTimes(2);
+      await jest.advanceTimersByTimeAsync(1);
+      expect(fetchToken).toHaveBeenCalledTimes(3);
+      await expect(settled).resolves.toMatchObject({ message: `HTTP ${status}` });
+    });
+
+    it("never retries a 403 (GenetecForbiddenError)", async () => {
+      const fetchToken = jest.fn().mockRejectedValue(new GenetecForbiddenError());
+      await expect(build(fetchToken)("guid-1")).rejects.toBeInstanceOf(
+        GenetecForbiddenError
+      );
+      await jest.advanceTimersByTimeAsync(5000);
+      expect(fetchToken).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not retry other HTTP errors such as 404", async () => {
+      const fetchToken = jest.fn().mockRejectedValue(httpError(404));
+      await expect(build(fetchToken)("guid-1")).rejects.toThrow("HTTP 404");
+      expect(fetchToken).toHaveBeenCalledTimes(1);
+    });
   });
 });

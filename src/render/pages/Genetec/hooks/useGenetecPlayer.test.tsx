@@ -1,12 +1,15 @@
-import { ReactNode } from "react";
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { ReactNode, useRef } from "react";
+import { act, render, renderHook, waitFor } from "@testing-library/react";
 import poc from "@/render/config/poc.config";
 import {
   GenetecServiceContext,
   GenetecServiceValue
 } from "@/render/pages/Genetec/components/GenetecServiceContext";
 import { useGenetecPlayer } from "@/render/pages/Genetec/hooks/useGenetecPlayer";
+import { useMediaGatewayService } from "@/render/pages/Genetec/hooks/useMediaGatewayService";
 import {
+  getEvents,
+  getSamples,
   resetStatsStore,
   useStatsStore
 } from "@/render/pages/Genetec/stats/statsStore";
@@ -84,13 +87,13 @@ describe("useGenetecPlayer (mock mode)", () => {
     await act(async () => {
       await useStatsStore.getState().pollOnce();
     });
-    expect(useStatsStore.getState().samples).toHaveLength(1);
-    expect(useStatsStore.getState().samples[0].cameraId).toBe("cam-1");
+    expect(getSamples()).toHaveLength(1);
+    expect(getSamples()[0].cameraId).toBe("cam-1");
     unmount();
     await act(async () => {
       await useStatsStore.getState().pollOnce();
     });
-    expect(useStatsStore.getState().samples).toHaveLength(1);
+    expect(getSamples()).toHaveLength(1);
     useStatsStore.getState().stopPhase();
   });
 });
@@ -290,8 +293,9 @@ describe("useGenetecPlayer (gwp mode, individual)", () => {
         isFatal: false
       })
     );
-    const events = useStatsStore.getState().events;
+    const events = getEvents();
     expect(events.map((e) => [e.kind, e.code, e.cameraId])).toEqual([
+      ["start-requested", 0, "cam-1"],
       ["streamStatus", 5, "cam-1"],
       ["error", 9, "cam-1"]
     ]);
@@ -306,7 +310,7 @@ describe("useGenetecPlayer (gwp mode, individual)", () => {
       await useStatsStore.getState().pollOnce();
     });
     expect(ctx.player.getPlayerStats).toHaveBeenCalled();
-    expect(useStatsStore.getState().samples[0].fps).toBe(25);
+    expect(getSamples()[0].fps).toBe(25);
     act(() => useStatsStore.getState().setDebugOverlay(true));
     expect(ctx.player.showDebugOverlay).toHaveBeenCalledWith(true);
     useStatsStore.getState().stopPhase();
@@ -428,5 +432,421 @@ describe("useGenetecPlayer (gwp mode, multiplexed)", () => {
     await waitFor(() => expect(result.current.status).toBe("error"));
     expect(result.current.error?.message).toBe("svc down");
     expect(gwp.buildPlayer).not.toHaveBeenCalled();
+  });
+});
+
+describe("useGenetecPlayer (gwp mode, review fixes)", () => {
+  const gwp = { buildPlayer: jest.fn() };
+  let ctx: ReturnType<typeof makePlayer>;
+  const events = () => getEvents();
+  const errorsBy = (source: string) =>
+    events().filter((e) => e.kind === "error" && e.source === source);
+
+  const retrieverOf = (c: ReturnType<typeof makePlayer>) =>
+    (c.player.start.mock.calls[0] as unknown[])[2] as (
+      id: string
+    ) => Promise<string>;
+
+  beforeEach(() => {
+    poc.genetecPlayerMode = "gwp";
+    poc.mediaGatewayUrl = "https://mg.test";
+    poc.startTimeoutMs = 30_000;
+    jest.clearAllMocks();
+    resetStatsStore();
+    ctx = makePlayer();
+    gwp.buildPlayer.mockReset();
+    gwp.buildPlayer.mockReturnValue(ctx.player);
+    (loadGwpScript as jest.Mock).mockReset();
+    (loadGwpScript as jest.Mock).mockResolvedValue(gwp);
+    (getGenetecToken as jest.Mock).mockReset();
+    (getGenetecToken as jest.Mock).mockResolvedValue({
+      token: "tok",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      mediaGatewayUrl: "x"
+    });
+    useStatsStore.getState().startPhase();
+  });
+  afterEach(() => {
+    useStatsStore.getState().stopPhase();
+    jest.useRealTimers();
+    jest.restoreAllMocks();
+  });
+  afterAll(() => {
+    poc.genetecPlayerMode = "mock";
+  });
+
+  const mount = (cam: GenetecCamera = camera) => {
+    const ref = makeRef();
+    return { ref, ...renderHook(() => useGenetecPlayer(ref, cam)) };
+  };
+
+  it("B1: records a start-requested event per cell", async () => {
+    mount();
+    await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+    expect(events().filter((e) => e.kind === "start-requested")).toHaveLength(1);
+  });
+
+  it("B1: records a script-load failure", async () => {
+    (loadGwpScript as jest.Mock).mockRejectedValue(new Error("script down"));
+    const { result } = mount();
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(errorsBy("script-load")).toHaveLength(1);
+    expect(errorsBy("script-load")[0]).toMatchObject({
+      cameraId: "cam-1",
+      message: "script down"
+    });
+  });
+
+  it("B1: records a token failure before the first Streaming exactly once", async () => {
+    (getGenetecToken as jest.Mock).mockRejectedValue(new Error("tok down"));
+    ctx.player.start.mockImplementation(async (...args: unknown[]) => {
+      await (args[2] as (g: string) => Promise<string>)("guid-1");
+    });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(errorsBy("token")).toHaveLength(1);
+    expect(errorsBy("start")).toHaveLength(0);
+  });
+
+  it("B1: records a start failure", async () => {
+    ctx.player.start.mockRejectedValue(new Error("boom"));
+    const { result } = mount();
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(errorsBy("start")).toHaveLength(1);
+  });
+
+  it("B1: records an offline camera", async () => {
+    const { result } = mount({ ...camera, status: "offline" });
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(errorsBy("offline")).toHaveLength(1);
+    expect(loadGwpScript).not.toHaveBeenCalled();
+  });
+
+  it("B1: records a fatal stream status once", async () => {
+    const { result } = mount();
+    await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+    act(() =>
+      ctx.events.onStreamStatusChanged.emit({ state: 22, value: "unreachable" })
+    );
+    expect(result.current.status).toBe("error");
+    expect(errorsBy("fatal-status")).toHaveLength(1);
+  });
+
+  it("B1: records a service build failure", async () => {
+    const ref = makeRef();
+    const Wrapper = ({ children }: { children: ReactNode }) => (
+      <GenetecServiceContext.Provider
+        value={{
+          multiplexed: true,
+          service: null,
+          ready: true,
+          error: new Error("svc down")
+        }}
+      >
+        {children}
+      </GenetecServiceContext.Provider>
+    );
+    renderHook(() => useGenetecPlayer(ref, camera), { wrapper: Wrapper });
+    await waitFor(() => expect(errorsBy("service-build")).toHaveLength(1));
+  });
+
+  describe("C1 start deadline", () => {
+    beforeEach(() => {
+      jest.useFakeTimers();
+      poc.startTimeoutMs = 5_000;
+    });
+
+    it("fails with start-timeout, records it and disposes the player", async () => {
+      const { result } = mount();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(4_999);
+      });
+      expect(result.current.status).toBe("loading");
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(1);
+      });
+      expect(result.current.status).toBe("error");
+      expect(errorsBy("start-timeout")).toHaveLength(1);
+      expect(ctx.player.stop).toHaveBeenCalled();
+      expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not fire once the stream reached Streaming", async () => {
+      const { result } = mount();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      act(() => ctx.events.onStreamStatusChanged.emit({ state: 5, value: "" }));
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(60_000);
+      });
+      expect(result.current.status).toBe("playing");
+      expect(errorsBy("start-timeout")).toHaveLength(0);
+    });
+
+    it("is cancelled on unmount", async () => {
+      const { unmount } = mount();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(100);
+      });
+      unmount();
+      await act(async () => {
+        await jest.advanceTimersByTimeAsync(60_000);
+      });
+      expect(errorsBy("start-timeout")).toHaveLength(0);
+    });
+  });
+
+  describe("C5 token renewal", () => {
+    it("records a renewal failure after Streaming, rethrows it, and keeps playing", async () => {
+      const { result } = mount();
+      await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+      act(() => ctx.events.onStreamStatusChanged.emit({ state: 5, value: "" }));
+      (getGenetecToken as jest.Mock).mockRejectedValue(new Error("renew down"));
+      const retrieve = retrieverOf(ctx);
+      // Expire the cached token so GWP asks the backend again.
+      const realNow = Date.now();
+      jest.spyOn(Date, "now").mockReturnValue(realNow + 120_000);
+      await expect(retrieve("guid-1")).rejects.toThrow("renew down");
+      expect(result.current.status).toBe("playing");
+      expect(errorsBy("token-renewal")).toHaveLength(1);
+      expect(errorsBy("token")).toHaveLength(0);
+    });
+  });
+
+  describe("C7 lifecycle", () => {
+    it("tears down the old player when the camera id changes and starts the new one", async () => {
+      const ctx2 = makePlayer();
+      gwp.buildPlayer.mockReset();
+      gwp.buildPlayer
+        .mockReturnValueOnce(ctx.player)
+        .mockReturnValueOnce(ctx2.player);
+      const ref = makeRef();
+      const cam2 = { ...camera, id: "cam-2", externalId: "guid-2", name: "Cam 2" };
+      const { rerender } = renderHook(
+        ({ cam }: { cam: GenetecCamera }) => useGenetecPlayer(ref, cam),
+        { initialProps: { cam: camera } }
+      );
+      await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+      rerender({ cam: cam2 });
+      await waitFor(() => expect(ctx2.player.playLive).toHaveBeenCalled());
+      expect(ctx.events.onStreamStatusChanged.handlers).toHaveLength(0);
+      expect(ctx.events.onErrorStateRaised.handlers).toHaveLength(0);
+      expect(ctx.events.onFrameRendered.handlers).toHaveLength(0);
+      expect(ctx.player.stop).toHaveBeenCalled();
+      expect(ctx.player.dispose).toHaveBeenCalled();
+      expect(ctx2.player.start).toHaveBeenCalledWith(
+        "guid-2",
+        "https://mg.test/media",
+        expect.any(Function)
+      );
+      await act(async () => {
+        await useStatsStore.getState().pollOnce();
+      });
+      expect(getSamples().map((x) => x.cameraId)).toEqual(["cam-2"]);
+      expect(ctx.player.getPlayerStats).not.toHaveBeenCalled();
+    });
+
+    it("ignores stale events from a player after cleanup", async () => {
+      const { result, unmount } = mount();
+      await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+      const stale = {
+        status: ctx.events.onStreamStatusChanged.handlers[0],
+        error: ctx.events.onErrorStateRaised.handlers[0],
+        frame: ctx.events.onFrameRendered.handlers[0]
+      };
+      unmount();
+      const before = events().length;
+      const stateBefore = result.current;
+      act(() => {
+        stale.status({ state: 5, value: "" });
+        stale.status({ state: 22, value: "late" });
+        stale.error({ errorCode: 1, value: "late", isFatal: true });
+        stale.frame(new Date());
+      });
+      expect(events()).toHaveLength(before);
+      expect(result.current).toBe(stateBefore);
+    });
+
+    it("fails in gwp mode for an offline camera without loading the script", async () => {
+      const { result } = mount({ ...camera, status: "offline" });
+      await waitFor(() => expect(result.current.status).toBe("error"));
+      expect(result.current.error?.message).toMatch(/offline/i);
+      expect(gwp.buildPlayer).not.toHaveBeenCalled();
+    });
+
+    it("does not play or leak when cancelled between buildPlayer and start resolving", async () => {
+      let resolveStart!: () => void;
+      ctx.player.start.mockImplementation(
+        () => new Promise<void>((r) => (resolveStart = r))
+      );
+      const { unmount } = mount();
+      await waitFor(() => expect(ctx.player.start).toHaveBeenCalled());
+      unmount();
+      await act(async () => resolveStart());
+      expect(ctx.player.playLive).not.toHaveBeenCalled();
+      expect(ctx.player.stop).toHaveBeenCalledTimes(1);
+      expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+      expect(ctx.events.onStreamStatusChanged.handlers).toHaveLength(0);
+    });
+  });
+});
+
+describe("useGenetecPlayer (gwp mode, batch 2 review fixes)", () => {
+  const gwp = { buildPlayer: jest.fn() };
+  let ctx: ReturnType<typeof makePlayer>;
+
+  beforeEach(() => {
+    poc.genetecPlayerMode = "gwp";
+    poc.mediaGatewayUrl = "https://mg.test";
+    poc.startTimeoutMs = 30_000;
+    jest.clearAllMocks();
+    resetStatsStore();
+    ctx = makePlayer();
+    gwp.buildPlayer.mockReset();
+    gwp.buildPlayer.mockReturnValue(ctx.player);
+    (loadGwpScript as jest.Mock).mockReset();
+    (loadGwpScript as jest.Mock).mockResolvedValue(gwp);
+    (getGenetecToken as jest.Mock).mockReset();
+    (getGenetecToken as jest.Mock).mockResolvedValue({
+      token: "tok",
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      mediaGatewayUrl: "x"
+    });
+    useStatsStore.getState().startPhase();
+  });
+  afterEach(() => {
+    useStatsStore.getState().stopPhase();
+    jest.useRealTimers();
+  });
+  afterAll(() => {
+    poc.genetecPlayerMode = "mock";
+  });
+
+  const mount = () => {
+    const ref = makeRef();
+    return renderHook(() => useGenetecPlayer(ref, camera));
+  };
+  const pollNoStatsExpected = async () => {
+    await act(async () => {
+      await useStatsStore.getState().pollOnce();
+    });
+    expect(ctx.player.getPlayerStats).not.toHaveBeenCalled();
+  };
+
+  it("never builds a player when the start deadline fires during script load", async () => {
+    jest.useFakeTimers();
+    poc.startTimeoutMs = 5_000;
+    let resolveScript!: (g: typeof gwp) => void;
+    (loadGwpScript as jest.Mock).mockReturnValue(
+      new Promise((r) => (resolveScript = r))
+    );
+    const { result } = mount();
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(5_000);
+    });
+    expect(result.current.status).toBe("error");
+    await act(async () => resolveScript(gwp));
+    expect(gwp.buildPlayer).not.toHaveBeenCalled();
+  });
+
+  it("releases the player and stops polling after a start failure, once, even on unmount", async () => {
+    ctx.player.start.mockRejectedValue(new Error("boom"));
+    const { result, unmount } = mount();
+    await waitFor(() => expect(result.current.status).toBe("error"));
+    expect(ctx.player.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+    await pollNoStatsExpected();
+    unmount();
+    expect(ctx.player.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the player and stops polling after a fatal gwp error, once, even on unmount", async () => {
+    const { result, unmount } = mount();
+    await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+    act(() =>
+      ctx.events.onErrorStateRaised.emit({ errorCode: 9, value: "fatal", isFatal: true })
+    );
+    expect(result.current.status).toBe("error");
+    expect(ctx.player.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+    await pollNoStatsExpected();
+    unmount();
+    expect(ctx.player.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("releases the player once after a fatal stream status", async () => {
+    const { result } = mount();
+    await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+    act(() =>
+      ctx.events.onStreamStatusChanged.emit({ state: 22, value: "unreachable" })
+    );
+    expect(result.current.status).toBe("error");
+    expect(ctx.player.stop).toHaveBeenCalledTimes(1);
+    expect(ctx.player.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares one token concurrency cap across 8 cells in individual mode", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const releases: Array<() => void> = [];
+    (getGenetecToken as jest.Mock).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          active += 1;
+          maxActive = Math.max(maxActive, active);
+          releases.push(() => {
+            active -= 1;
+            resolve({
+              token: "tok",
+              expiresAt: new Date(Date.now() + 60_000).toISOString(),
+              mediaGatewayUrl: "x"
+            });
+          });
+        })
+    );
+    gwp.buildPlayer.mockImplementation(() => {
+      const c = makePlayer();
+      c.player.start.mockImplementation(async (...args: unknown[]) => {
+        await (args[2] as (g: string) => Promise<string>)(args[0] as string);
+      });
+      return c.player;
+    });
+    const cams: GenetecCamera[] = Array.from({ length: 8 }, (_, i) => ({
+      ...camera,
+      id: `cam-${i}`,
+      externalId: `guid-${i}`,
+      name: `Cam ${i}`
+    }));
+    const Cell = ({ cam }: { cam: GenetecCamera }) => {
+      const ref = useRef(document.createElement("div"));
+      useGenetecPlayer(ref, cam);
+      return null;
+    };
+    const Mosaic = () => {
+      const value = useMediaGatewayService(false, cams);
+      return (
+        <GenetecServiceContext.Provider value={value}>
+          {cams.map((c) => (
+            <Cell key={c.id} cam={c} />
+          ))}
+        </GenetecServiceContext.Provider>
+      );
+    };
+    render(<Mosaic />);
+    await waitFor(() => expect(releases.length).toBeGreaterThanOrEqual(4));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(maxActive).toBe(4);
+    // Drain: every released slot lets the next queued fetch start.
+    for (let i = 0; i < 8; i += 1) {
+      await waitFor(() => expect(releases.length).toBeGreaterThan(i));
+      await act(async () => releases[i]());
+    }
+    expect(getGenetecToken).toHaveBeenCalledTimes(8);
+    expect(maxActive).toBeLessThanOrEqual(4);
   });
 });

@@ -1,6 +1,7 @@
 import type {
   PhaseSummary,
-  StatsSample
+  StatsSample,
+  StreamEvent
 } from "@/render/types/genetecMetrics";
 
 type Cell = string | number | boolean | null | undefined;
@@ -119,6 +120,49 @@ export const buildSummaryCsv = (summaries: PhaseSummary[]): string =>
       s.timeToFirstStreamingMs.max,
       s.statsReadFailures
     ])
+  );
+
+const EVENT_HEADER = [
+  "ts",
+  "seq",
+  "phaseId",
+  "cameraId",
+  "kind",
+  "source",
+  "code",
+  "isFatal",
+  "status"
+];
+
+/**
+ * Spreadsheets run cells starting with = + - @ as formulas: prefix a single quote.
+ * Only strings are touched (numbers such as -1 stay numeric).
+ */
+const neutralizeFormula = (value: string | undefined): string | undefined =>
+  value !== undefined && /^[=+\-@]/.test(value) ? `'${value}` : value;
+
+/**
+ * One row per recorded event. Free-text messages are NOT exported.
+ * "status" is the StreamingConnectionStatus of "streamStatus" events;
+ * "code" is the error code of the other kinds.
+ */
+export const buildEventsCsv = (events: StreamEvent[]): string =>
+  toCsv(
+    EVENT_HEADER,
+    events.map((e) => {
+      const isStatus = e.kind === "streamStatus";
+      return [
+        iso(e.timestamp),
+        e.seq,
+        neutralizeFormula(e.phaseId),
+        neutralizeFormula(e.cameraId),
+        neutralizeFormula(e.kind),
+        neutralizeFormula(e.source),
+        isStatus ? null : e.code,
+        e.isFatal,
+        isStatus ? e.code : null
+      ];
+    })
   );
 
 /** Browser-only: triggers a file download through a temporary object URL. */

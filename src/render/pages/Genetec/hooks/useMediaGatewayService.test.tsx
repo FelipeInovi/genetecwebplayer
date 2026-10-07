@@ -2,6 +2,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import poc from "@/render/config/poc.config";
 import { loadGwpScript } from "@/render/pages/Genetec/hooks/loadGwpScript";
 import { useMediaGatewayService } from "@/render/pages/Genetec/hooks/useMediaGatewayService";
+import {
+  getEvents,
+  resetStatsStore,
+  useStatsStore
+} from "@/render/pages/Genetec/stats/statsStore";
 import { getGenetecToken } from "@/render/service/genetec/genetecService";
 import type { GenetecCamera } from "@/render/types/genetec";
 
@@ -120,5 +125,43 @@ describe("useMediaGatewayService", () => {
       ready: true
     });
     expect(loadGwpScript).not.toHaveBeenCalled();
+  });
+
+  describe("token failures are recorded in the stats store (C5)", () => {
+    const retrieverOfService = async () => {
+      const { result } = renderHook(() => useMediaGatewayService(true, cameras));
+      await waitFor(() => expect(result.current.ready).toBe(true));
+      return gwp.buildMediaGatewayService.mock.calls[0][1] as (
+        guid: string
+      ) => Promise<string>;
+    };
+
+    beforeEach(() => {
+      resetStatsStore();
+      useStatsStore.getState().startPhase();
+    });
+    afterEach(() => useStatsStore.getState().stopPhase());
+
+    it("records a failure before Streaming as source token and rethrows", async () => {
+      (getGenetecToken as jest.Mock).mockRejectedValue(new Error("down"));
+      const retrieve = await retrieverOfService();
+      await expect(retrieve("guid-2")).rejects.toThrow("down");
+      expect(getEvents()).toHaveLength(1);
+      expect(getEvents()[0]).toMatchObject({
+        kind: "error",
+        cameraId: "cam-2",
+        source: "token"
+      });
+    });
+
+    it("records a failure after Streaming as token-renewal", async () => {
+      (getGenetecToken as jest.Mock).mockRejectedValue(new Error("down"));
+      useStatsStore.getState().recordStreamStatus("cam-2", 5, "");
+      const retrieve = await retrieverOfService();
+      await expect(retrieve("guid-2")).rejects.toThrow("down");
+      const errors = getEvents().filter((e) => e.kind === "error");
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatchObject({ source: "token-renewal" });
+    });
   });
 });

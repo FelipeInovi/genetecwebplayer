@@ -1,4 +1,5 @@
 import {
+  buildEventsCsv,
   buildSamplesCsv,
   buildSummaryCsv,
   escapeCsvField,
@@ -6,6 +7,7 @@ import {
 } from "@/render/pages/Genetec/stats/csv";
 import type {
   PhaseSummary,
+  StreamEvent,
   StatsSample
 } from "@/render/types/genetecMetrics";
 
@@ -100,4 +102,47 @@ describe("buildSummaryCsv", () => {
     expect(col("timeToFirstStreamingMaxMs")).toBe("2500");
     expect(col("statsReadFailures")).toBe("3");
   });
+});
+
+describe("buildEventsCsv", () => {
+  const event = (over: Partial<StreamEvent> = {}): StreamEvent => ({
+    kind: "error",
+    timestamp: Date.UTC(2026, 0, 2, 3, 4, 5),
+    seq: 7,
+    phaseId: "phase-1",
+    cameraId: "cam-1",
+    code: 12,
+    isFatal: true,
+    message: "free text is never exported",
+    source: "token",
+    ...over
+  });
+  const lines = (csv: string) => csv.trimEnd().split("\r\n");
+
+  it("writes one row per event with the documented header", () => {
+    const out = lines(buildEventsCsv([event()]));
+    expect(out[0]).toBe("ts,seq,phaseId,cameraId,kind,source,code,isFatal,status");
+    expect(out[1]).toBe("2026-01-02T03:04:05.000Z,7,phase-1,cam-1,error,token,12,true,");
+  });
+
+  it("puts the stream status in the status column and leaves code empty", () => {
+    const row = lines(
+      buildEventsCsv([event({ kind: "streamStatus", code: 5, isFatal: false, source: undefined })])
+    )[1];
+    expect(row).toBe("2026-01-02T03:04:05.000Z,7,phase-1,cam-1,streamStatus,,,false,5");
+  });
+
+  it("escapes commas, quotes and newlines", () => {
+    const row = lines(buildEventsCsv([event({ cameraId: 'a,"b"' })]))[1];
+    expect(row).toContain('"a,""b"""');
+  });
+
+  it.each(["=SUM(1)", "+1", "-1", "@cmd"])(
+    "neutralizes formula injection in %s with a single quote",
+    (value) => {
+      const csv = buildEventsCsv([event({ cameraId: value, source: value })]);
+      expect(csv).not.toContain(`,${value}`);
+      expect(csv).toContain(`'${value}`);
+    }
+  );
 });

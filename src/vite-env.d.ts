@@ -6,4 +6,5 @@ interface ImportMetaEnv {
   readonly VITE_MEDIA_GATEWAY_URL?: string;
   readonly VITE_GENETEC_PLAYER_MODE?: string;
   readonly VITE_USE_MOCK_API?: string;
+  readonly VITE_START_TIMEOUT_MS?: string;
 }
