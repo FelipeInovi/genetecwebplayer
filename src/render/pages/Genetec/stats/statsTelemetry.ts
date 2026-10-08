@@ -1,4 +1,5 @@
 import {
+  recordCameraAssigned,
   recordError,
   recordStart,
   recordStreamStatus,
@@ -11,5 +12,6 @@ export const statsTelemetry: GenetecPlayerTelemetry = {
   onStartRequested: recordStart,
   onError: recordError,
   onStreamStatus: recordStreamStatus,
-  registerStatsSource: registerPlayer
+  registerStatsSource: registerPlayer,
+  onCameraAssigned: recordCameraAssigned
 };

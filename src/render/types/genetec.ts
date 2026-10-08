@@ -55,6 +55,15 @@ export interface GenetecPlayerTelemetry {
     cameraId: string,
     getStats: () => Promise<IPlayerStats>
   ) => () => void;
+  /**
+   * Optional: a camera was assigned to a mosaic cell. Emitted by whoever owns
+   * the assignment (the page), not by the player. Absent = nobody listens.
+   */
+  onCameraAssigned?: (
+    cellIndex: number,
+    cameraId: string,
+    previousCameraId: string | null
+  ) => void;
 }
 
 /**

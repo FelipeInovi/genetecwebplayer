@@ -141,6 +141,20 @@ const pushEvent = (event: NewEvent): void => {
 export const recordStart = (cameraId: string): void =>
   pushEvent({ kind: "start-requested", cameraId, code: 0, message: "" });
 
+export const recordCameraAssigned = (
+  cellIndex: number,
+  cameraId: string,
+  previousCameraId: string | null
+): void =>
+  pushEvent({
+    kind: "camera-assigned",
+    cameraId,
+    code: 0,
+    message: "",
+    cellIndex,
+    previousCameraId
+  });
+
 export const recordStreamStatus = (
   cameraId: string,
   code: number,

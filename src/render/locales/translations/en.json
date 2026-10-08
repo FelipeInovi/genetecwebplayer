@@ -25,6 +25,29 @@
       "running": "Phase {{phase}} running",
       "idle": "No active phase",
       "counters": "Samples: {{samples}} · Errors: {{errors}} · Reconnections: {{reconnections}}"
+    },
+    "mosaic": {
+      "cell": "Cell {{n}}",
+      "empty": "Drop or select a camera",
+      "clear": "Clear cell {{n}}"
+    },
+    "cameraList": {
+      "title": "Cameras",
+      "search": "Search by name",
+      "hint": "Select a cell, then click a camera to show it there. You can also drag a camera onto a cell.",
+      "status": {
+        "online": "Online",
+        "offline": "Offline",
+        "unknown": "Unknown"
+      },
+      "inCell": "Cell {{n}}",
+      "noResults": "No cameras match your search."
+    },
+    "group": {
+      "previous": "Previous group",
+      "next": "Next group",
+      "range": "Cameras {{from}}–{{to}} of {{total}}",
+      "custom": "Custom selection"
     }
   }
 }

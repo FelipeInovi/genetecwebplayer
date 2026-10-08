@@ -1,15 +1,20 @@
 import { useMemo } from "react";
 import { Box } from "@mui/material";
 import { GenetecServiceContext } from "@/render/pages/Genetec/components/GenetecServiceContext";
-import GenetecPlayerCell from "@/render/pages/Genetec/components/GenetecPlayerCell";
+import GenetecMosaicCell from "@/render/pages/Genetec/components/GenetecMosaicCell";
 import { getGridColumns } from "@/render/pages/Genetec/components/getGridColumns";
+import type { CellAssignment } from "@/render/pages/Genetec/hooks/cellAssignment";
 import { useMediaGatewayService } from "@/render/pages/Genetec/hooks/useMediaGatewayService";
 import type { GenetecCamera } from "@/render/types/genetec";
 
 interface Props {
+  /** The whole catalog (cameras that are not displayed included). */
   cameras: GenetecCamera[];
-  /** How many cameras to show. Default: all. */
-  cameraCount?: number;
+  /** One camera id (or null) per cell; its length is the cell count. */
+  assignment: CellAssignment;
+  selectedCell: number | null;
+  onSelectCell: (cellIndex: number) => void;
+  onClearCell: (cellIndex: number) => void;
   /** true: one shared IMediaGatewayService per mosaic (startWithService). */
   multiplexed?: boolean;
   debugOverlay?: boolean;
@@ -19,7 +24,10 @@ interface Props {
 
 const GenetecMosaic = ({
   cameras,
-  cameraCount = cameras.length,
+  assignment,
+  selectedCell,
+  onSelectCell,
+  onClearCell,
   multiplexed = false,
   debugOverlay = false,
   runKey = 0
@@ -29,7 +37,7 @@ const GenetecMosaic = ({
     () => ({ ...service, debugOverlay }),
     [service, debugOverlay]
   );
-  const visible = cameras.slice(0, cameraCount);
+  const byId = useMemo(() => new Map(cameras.map((c) => [c.id, c])), [cameras]);
 
   return (
     <GenetecServiceContext.Provider value={value}>
@@ -38,11 +46,19 @@ const GenetecMosaic = ({
         sx={{
           display: "grid",
           gap: 1,
-          gridTemplateColumns: `repeat(${getGridColumns(visible.length)}, minmax(0, 1fr))`
+          gridTemplateColumns: `repeat(${getGridColumns(assignment.length)}, minmax(0, 1fr))`
         }}
       >
-        {visible.map((camera) => (
-          <GenetecPlayerCell key={camera.id} camera={camera} />
+        {assignment.map((cameraId, index) => (
+          // Keyed by slot: a cell whose camera did not change never restarts.
+          <GenetecMosaicCell
+            key={index}
+            index={index}
+            camera={(cameraId && byId.get(cameraId)) || null}
+            selected={selectedCell === index}
+            onSelect={onSelectCell}
+            onClear={onClearCell}
+          />
         ))}
       </Box>
     </GenetecServiceContext.Provider>

@@ -131,7 +131,9 @@ const EVENT_HEADER = [
   "source",
   "code",
   "isFatal",
-  "status"
+  "status",
+  "cellIndex",
+  "previousCameraId"
 ];
 
 /**
@@ -144,7 +146,9 @@ const neutralizeFormula = (value: string | undefined): string | undefined =>
 /**
  * One row per recorded event. Free-text messages are NOT exported.
  * "status" is the StreamingConnectionStatus of "streamStatus" events;
- * "code" is the error code of the other kinds.
+ * "code" is the error code of the other kinds. "cellIndex" and
+ * "previousCameraId" are only filled by "camera-assigned" events (cameraId is
+ * then the newly assigned camera).
  */
 export const buildEventsCsv = (events: StreamEvent[]): string =>
   toCsv(
@@ -152,6 +156,7 @@ export const buildEventsCsv = (events: StreamEvent[]): string =>
     events.map((e) => {
       const isStatus = e.kind === "streamStatus";
       const isError = e.kind === "error";
+      const isAssigned = e.kind === "camera-assigned";
       return [
         iso(e.timestamp),
         e.seq,
@@ -161,7 +166,9 @@ export const buildEventsCsv = (events: StreamEvent[]): string =>
         neutralizeFormula(isError ? e.source : undefined),
         isStatus ? null : e.code,
         isError && e.isFatal,
-        isStatus ? e.code : null
+        isStatus ? e.code : null,
+        isAssigned ? e.cellIndex : null,
+        isAssigned ? neutralizeFormula(e.previousCameraId ?? undefined) : null
       ];
     })
   );

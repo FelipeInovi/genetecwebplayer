@@ -25,6 +25,29 @@
       "running": "Phase {{phase}} en cours",
       "idle": "Aucune phase active",
       "counters": "Échantillons : {{samples}} · Erreurs : {{errors}} · Reconnexions : {{reconnections}}"
+    },
+    "mosaic": {
+      "cell": "Cellule {{n}}",
+      "empty": "Déposez ou sélectionnez une caméra",
+      "clear": "Vider la cellule {{n}}"
+    },
+    "cameraList": {
+      "title": "Caméras",
+      "search": "Rechercher par nom",
+      "hint": "Sélectionnez une cellule, puis cliquez sur une caméra pour l'y afficher. Vous pouvez aussi faire glisser une caméra sur une cellule.",
+      "status": {
+        "online": "En ligne",
+        "offline": "Hors ligne",
+        "unknown": "Inconnue"
+      },
+      "inCell": "Cellule {{n}}",
+      "noResults": "Aucune caméra ne correspond à la recherche."
+    },
+    "group": {
+      "previous": "Groupe précédent",
+      "next": "Groupe suivant",
+      "range": "Caméras {{from}}–{{to}} sur {{total}}",
+      "custom": "Sélection personnalisée"
     }
   }
 }

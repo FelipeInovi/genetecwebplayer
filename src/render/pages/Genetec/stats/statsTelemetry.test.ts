@@ -41,4 +41,19 @@ describe("statsTelemetry", () => {
     await pollOnce();
     expect(getSamples()).toHaveLength(1);
   });
+
+  it("records a camera-assigned event with cell and previous camera", () => {
+    statsTelemetry.onCameraAssigned?.(2, "cam-9", "cam-3");
+    statsTelemetry.onCameraAssigned?.(0, "cam-1", null);
+    expect(getEvents()).toMatchObject([
+      { kind: "camera-assigned", cellIndex: 2, cameraId: "cam-9", previousCameraId: "cam-3" },
+      { kind: "camera-assigned", cellIndex: 0, cameraId: "cam-1", previousCameraId: null }
+    ]);
+  });
+
+  it("does not record camera-assigned outside an active phase", () => {
+    endPhase();
+    statsTelemetry.onCameraAssigned?.(0, "cam-1", null);
+    expect(getEvents()).toHaveLength(0);
+  });
 });

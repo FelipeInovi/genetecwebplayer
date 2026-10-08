@@ -167,6 +167,8 @@ const streamOutcomes = (
   };
   for (const id of sampleCameras) track(id);
   for (const e of [...events].sort(compareEvents)) {
+    // Bookkeeping about the mosaic, not about a stream: it says nothing on whether it streamed.
+    if (e.kind === "camera-assigned") continue;
     const t = track(e.cameraId);
     if (e.kind === "start-requested") {
       if (t.startedAt === null) t.startedAt = e.timestamp;

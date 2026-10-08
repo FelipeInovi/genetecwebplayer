@@ -95,7 +95,7 @@ const ev = (
   cameraId: string,
   code: number,
   timestamp: number,
-  kind: StreamEvent["kind"] = "streamStatus",
+  kind: Exclude<StreamEvent["kind"], "camera-assigned"> = "streamStatus",
   isFatal = false
 ): StreamEvent => {
   const base = { timestamp, phaseId: "p1", cameraId, code, message: "" };
@@ -251,6 +251,22 @@ describe("summarizePhase", () => {
     expect(s.errorCount).toBe(2);
     expect(s.fatalErrorCount).toBe(1);
     expect(s.reconnectionCount).toBe(1);
+  });
+
+  it("does not count a camera-assigned event as a camera that never streamed", () => {
+    const assigned: StreamEvent = {
+      kind: "camera-assigned",
+      timestamp: 1,
+      phaseId: "p1",
+      cameraId: "swapped-out",
+      code: 0,
+      message: "",
+      cellIndex: 0,
+      previousCameraId: null
+    };
+    const s = summarizePhase({ ...phase, endedAt: null }, [], [assigned]);
+    expect(s.camerasNeverStreamed).toBe(0);
+    expect(s.errorCount).toBe(0);
   });
 
   it("returns nulls and zeros for an empty phase", () => {

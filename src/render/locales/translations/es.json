@@ -25,6 +25,29 @@
       "running": "Fase {{phase}} en curso",
       "idle": "Sin fase activa",
       "counters": "Muestras: {{samples}} · Errores: {{errors}} · Reconexiones: {{reconnections}}"
+    },
+    "mosaic": {
+      "cell": "Celda {{n}}",
+      "empty": "Suelte o seleccione una cámara",
+      "clear": "Vaciar la celda {{n}}"
+    },
+    "cameraList": {
+      "title": "Cámaras",
+      "search": "Buscar por nombre",
+      "hint": "Seleccione una celda y luego haga clic en una cámara para mostrarla allí. También puede arrastrar una cámara hasta una celda.",
+      "status": {
+        "online": "En línea",
+        "offline": "Fuera de línea",
+        "unknown": "Desconocida"
+      },
+      "inCell": "Celda {{n}}",
+      "noResults": "Ninguna cámara coincide con la búsqueda."
+    },
+    "group": {
+      "previous": "Grupo anterior",
+      "next": "Grupo siguiente",
+      "range": "Cámaras {{from}}–{{to}} de {{total}}",
+      "custom": "Selección personalizada"
     }
   }
 }

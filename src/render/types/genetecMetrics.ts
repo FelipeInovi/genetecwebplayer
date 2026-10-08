@@ -61,7 +61,21 @@ export interface StartRequestedEvent extends StreamEventBase {
   kind: "start-requested";
 }
 
-export type StreamEvent = ErrorEvent | StreamStatusEvent | StartRequestedEvent;
+/**
+ * A camera was assigned to a mosaic cell (mid-phase changes). `code` is 0 and
+ * `cameraId` is the NEW camera.
+ */
+export interface CameraAssignedEvent extends StreamEventBase {
+  kind: "camera-assigned";
+  cellIndex: number;
+  previousCameraId: string | null;
+}
+
+export type StreamEvent =
+  | ErrorEvent
+  | StreamStatusEvent
+  | StartRequestedEvent
+  | CameraAssignedEvent;
 
 export type StreamEventKind = StreamEvent["kind"];
 

@@ -109,6 +109,47 @@ the same retriever path. A renewal failure after the cell reached `Streaming`
 is recorded as `token-renewal` and rethrown to GWP, but the cell keeps
 playing; only failures before the first `Streaming` fail the cell.
 
+## Selecting cameras
+
+The mosaic shows one camera per cell, chosen from the whole catalog (it is NOT
+"the first N cameras"). The cell count comes from the test panel (1/4/8/16/32).
+At start the cells show cameras 1..N.
+
+- Click a cell to select it (outlined), then click a camera in the list on the
+  left to show it there. Cells and list items are buttons, so Tab + Enter/Space
+  works without a mouse.
+- Or drag a camera from the list onto a cell (`@dnd-kit/core`). Dragging a
+  filled cell onto another one moves/swaps its camera.
+- A camera is never in two cells: assigning one that is already displayed swaps
+  the two cells. The small x of a cell empties it (placeholder, no session).
+- "Previous group" / "Next group" move through the catalog N cameras at a time,
+  wrapping around (32 cameras, 4 cells: 1-4, 5-8 ... 29-32, 1-4). The label reads
+  "Cameras 5-8 of 32" for a contiguous group and "Custom selection" otherwise.
+  A catalog that is not a multiple of N ends with a PARTIAL group (10 cameras,
+  4 cells: 9-10 plus two empty cells); cameras are never repeated to fill it.
+  Groups advance from the first displayed camera, so a manual pick shifts the
+  grouping from there.
+- Changing the cell count keeps your picks, truncates, and fills empty cells
+  with cameras that are not displayed yet.
+- The search box filters the list by name; each item shows online/offline and
+  the cell that displays it.
+
+Gateway session limit: every filled cell holds one Media Gateway session. If
+the gateway allows e.g. 4 concurrent sessions, use 4 cells and page through the
+catalog: a cell whose camera changes is fully released (`stop()` + `dispose()`,
+stats source unregistered) BEFORE the new camera starts, and cells whose camera
+did not change are not restarted. With cells above the limit, the extra ones
+fail with the gateway error (e.g. `LiveCapacityExceeded`, `TooManyClients`) and
+show it in the cell; free sessions by clearing cells or lowering the count.
+Multiplexed mode keeps one shared service and every cell still calls
+`startWithService`; changing a camera does not rebuild the service.
+
+During a phase, every camera change is recorded as a `camera-assigned` event
+(columns `cellIndex` and `previousCameraId` of the events CSV; `cameraId` is the
+NEW camera; clears and changes outside a phase are not recorded), so a CSV
+shows when a group was swapped mid-test. These events do not count as errors
+nor as cameras that never streamed.
+
 ## Metrics and CSV
 
 The test panel (top of the page) picks camera count (1/4/8/16/32) and the
@@ -119,8 +160,9 @@ debug overlay switch calls `showDebugOverlay` on every player.
 
 "Export CSV" downloads three files: `genetec-samples-*.csv` (raw per-camera
 samples), `genetec-events-*.csv` (one row per event: `ts, seq, phaseId,
-cameraId, kind, source, code, isFatal, status`; `status` is the stream status of
-`streamStatus` events, `code` the error code of the others; free-text messages
+cameraId, kind, source, code, isFatal, status, cellIndex, previousCameraId`;
+`status` is the stream status of `streamStatus` events, `code` the error code
+of the others, the last two only exist for `camera-assigned` events; free-text messages
 are not exported and text fields starting with `= + - @` get a leading `'`) and
 `genetec-summary-*.csv` (one row per phase: avg/p95/max latency,
 avg fps, total bandwidth = sum of per-camera average bitrate, packets lost and
@@ -163,13 +205,20 @@ data on demand. Leaving the page stops the active phase and its polling timer.
 The player feature is decoupled from the load-test tooling through one
 optional seam, `GenetecPlayerTelemetry` (`types/genetec.ts`): `onStartRequested`,
 `onError`, `onStreamStatus` and `registerStatsSource` (returns its unregister
-function). It is provided through `GenetecTelemetryContext` and defaults to a
+function), plus the optional `onCameraAssigned` (emitted by the page, which owns
+the assignment, not by the player). It is provided through `GenetecTelemetryContext` and defaults to a
 no-op, so the player hooks and components never import `stats/`. Only
 `GenetecPage` (the test harness) provides the real implementation
 (`stats/statsTelemetry.ts`). UI settings of the harness (camera count,
 multiplexed, debug overlay) are page state; the debug overlay reaches the
 players through `GenetecServiceContext`.
 
+- `hooks/cellAssignment.ts`: pure model of cell -> camera id (create, resize,
+  assign with swap, clear, next/previous group, range label, diff);
+  `hooks/useCellAssignment.ts`: page state around it (+ selected cell).
+- `components/GenetecCameraList.tsx` (searchable, draggable list),
+  `GenetecMosaicCell.tsx` (drop target + select + clear), `GenetecGroupNav.tsx`,
+  `resolveDrop.ts` (what a drag-end means).
 - `hooks/useGenetecPlayer.ts`: thin hook (reducer + one effect).
 - `hooks/playerReducer.ts`: `idle | loading | playing | error` state machine.
 - `hooks/playerSession.ts`: lifecycle of one start attempt (`cancelled || failed`
@@ -191,14 +240,16 @@ OPTIONAL in the target: without it the player runs with the no-op default.
 
 | POC source | broadlineavida target |
 | --- | --- |
-| `src/render/pages/Genetec/components/GenetecMosaic.tsx`, `GenetecPlayerCell.tsx`, `GenetecServiceContext.ts`, `GenetecTelemetryContext.ts`, `getGridColumns.ts` (+ tests) | `src/render/pages/Genetec/components/` |
+| `src/render/pages/Genetec/components/GenetecMosaic.tsx`, `GenetecMosaicCell.tsx`, `GenetecPlayerCell.tsx`, `GenetecServiceContext.ts`, `GenetecTelemetryContext.ts`, `getGridColumns.ts` (+ tests) | `src/render/pages/Genetec/components/` |
+| `src/render/pages/Genetec/components/{GenetecCameraList.tsx,GenetecGroupNav.tsx,resolveDrop.ts}` (+ tests) | `src/render/pages/Genetec/components/`. broadlineavida already has a CCTV pattern (`pages/CCTV/components/{CCTVCameraDragList,CCTVMosaic,MosaicCell}.tsx`, `CCTVContext`) built on the same `@dnd-kit/core` (`^6.3.1`, already a dependency there): the camera list can be replaced by or merged with `CCTVCameraDragList`; keep `resolveDrop` + `cellAssignment` for the group paging and swap rules |
+| `src/render/pages/Genetec/hooks/{cellAssignment,useCellAssignment}.ts` (+ tests) | `src/render/pages/Genetec/hooks/` (pure, no dependencies; new dependency `@dnd-kit/core` only for the list/cells) |
 | `src/render/pages/Genetec/hooks/{useGenetecPlayer,playerReducer,playerSession,attachPlayer,instrumentTokenRetriever,streamedCameras,loadGwpScript,useMediaGatewayService,useGenetecCameras}.ts` (+ tests) | `src/render/pages/Genetec/hooks/` |
-| `src/render/pages/Genetec/GenetecPage.tsx` | `src/render/pages/Genetec/GenetecPage.tsx`, trimmed: keep camera list, loading/error alerts, title and `GenetecMosaic`; drop `GenetecTestPanel`, the telemetry provider, test-config state and `runKey` |
+| `src/render/pages/Genetec/GenetecPage.tsx` | `src/render/pages/Genetec/GenetecPage.tsx`, trimmed: keep camera list, loading/error alerts, title and `GenetecMosaic`; drop `GenetecTestPanel`, the telemetry provider, test-config state and `runKey`; keep `useCellAssignment`, the camera list, the group nav and the `DndContext` (set the cell count from a layout selector instead of the test panel; drop the `camera-assigned` reporting effect) |
 | `src/render/service/genetec/{genetecService,mediaEndpoint,tokenRetriever}.ts` (+ tests) | `src/render/service/genetec/`; in `genetecService.ts` import `apiLV` from `service/apiLVl.ts` and delete the `// POC-only:` mock branches |
 | `src/render/service/errors.ts` (`TokenExpiredError`, `GenetecForbiddenError`, `GwpPlayerError`, `CameraOfflineError`, `toError`) | `src/render/service/errors.ts` (merge with existing exports) |
 | `src/render/types/genetec.ts` | `src/render/types/genetec.ts` (split into `types/genetec*.ts` if preferred) |
 | `src/render/config/poc.config.ts` fields | add to `config/<tenant>.config.ts`: `genetecEnabled`, `mediaGatewayUrl`, `startTimeoutMs` (default 30000); `genetecPlayerMode` and `useMockApi` only if the mock player is kept. `attachPlayer.ts`, `useGenetecPlayer.ts` and `useMediaGatewayService.ts` import the POC config: point them to the tenant config |
-| `genetec` section of `src/render/locales/translations/{es,en,fr}.json`: `title`, `cameraCount`, `disabled`, `player.loading`, `errors.*` | `src/render/locales/translations/{es,en,fr}.json` (do NOT copy `genetec.test.*`; copy `genetec.mode` only if the page keeps the mode line) |
+| `genetec` section of `src/render/locales/translations/{es,en,fr}.json`: `title`, `cameraCount`, `disabled`, `player.loading`, `errors.*`, `mosaic.*`, `cameraList.*`, `group.*` | `src/render/locales/translations/{es,en,fr}.json` (do NOT copy `genetec.test.*`; copy `genetec.mode` only if the page keeps the mode line) |
 | route | `routes/LazyPages.tsx` (lazy `GenetecPage`) and `routes/AppRoutes.tsx` wrapped in `RouteAccess` with `allowedProjects={["MV"]}` |
 | navigation | `components/Header/BtnsHeader.tsx` |
 

@@ -7,6 +7,7 @@ import {
 } from "@/render/pages/Genetec/stats/csv";
 import type { ErrorSource } from "@/render/types/genetec";
 import type {
+  CameraAssignedEvent,
   ErrorEvent,
   PhaseSummary,
   StatsSample,
@@ -123,8 +124,8 @@ describe("buildEventsCsv", () => {
 
   it("writes one row per event with the documented header", () => {
     const out = lines(buildEventsCsv([event()]));
-    expect(out[0]).toBe("ts,seq,phaseId,cameraId,kind,source,code,isFatal,status");
-    expect(out[1]).toBe("2026-01-02T03:04:05.000Z,7,phase-1,cam-1,error,token,12,true,");
+    expect(out[0]).toBe("ts,seq,phaseId,cameraId,kind,source,code,isFatal,status,cellIndex,previousCameraId");
+    expect(out[1]).toBe("2026-01-02T03:04:05.000Z,7,phase-1,cam-1,error,token,12,true,,,");
   });
 
   it("puts the stream status in the status column and leaves code empty", () => {
@@ -138,7 +139,25 @@ describe("buildEventsCsv", () => {
       message: "Streaming"
     };
     const row = lines(buildEventsCsv([status]))[1];
-    expect(row).toBe("2026-01-02T03:04:05.000Z,7,phase-1,cam-1,streamStatus,,,false,5");
+    expect(row).toBe("2026-01-02T03:04:05.000Z,7,phase-1,cam-1,streamStatus,,,false,5,,");
+  });
+
+  it("writes the cell and the previous camera of a camera-assigned event", () => {
+    const assigned: CameraAssignedEvent = {
+      kind: "camera-assigned",
+      timestamp: Date.UTC(2026, 0, 2, 3, 4, 5),
+      seq: 8,
+      phaseId: "phase-1",
+      cameraId: "cam-9",
+      code: 0,
+      message: "",
+      cellIndex: 2,
+      previousCameraId: "cam-3"
+    };
+    const first = lines(buildEventsCsv([assigned]))[1];
+    expect(first).toBe("2026-01-02T03:04:05.000Z,8,phase-1,cam-9,camera-assigned,,0,false,,2,cam-3");
+    const empty = lines(buildEventsCsv([{ ...assigned, previousCameraId: null }]))[1];
+    expect(empty).toBe("2026-01-02T03:04:05.000Z,8,phase-1,cam-9,camera-assigned,,0,false,,2,");
   });
 
   it("escapes commas, quotes and newlines", () => {

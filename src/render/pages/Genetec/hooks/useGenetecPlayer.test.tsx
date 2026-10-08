@@ -693,6 +693,30 @@ describe("useGenetecPlayer (gwp mode, review fixes)", () => {
       expect(ctx.player.getPlayerStats).not.toHaveBeenCalled();
     });
 
+    it("releases the old session (stop, dispose) BEFORE the new camera starts", async () => {
+      const ctx2 = makePlayer();
+      gwp.buildPlayer.mockReset();
+      gwp.buildPlayer
+        .mockReturnValueOnce(ctx.player)
+        .mockReturnValueOnce(ctx2.player);
+      const ref = makeRef();
+      const cam2 = { ...camera, id: "cam-2", externalId: "guid-2", name: "Cam 2" };
+      const { rerender } = renderHook(
+        ({ cam }: { cam: GenetecCamera }) => useGenetecPlayer(ref, cam),
+        { initialProps: { cam: camera } }
+      );
+      await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
+      rerender({ cam: cam2 });
+      await waitFor(() => expect(ctx2.player.start).toHaveBeenCalled());
+      const stopOrder = ctx.player.stop.mock.invocationCallOrder[0];
+      const disposeOrder = ctx.player.dispose.mock.invocationCallOrder[0];
+      const buildOrder = gwp.buildPlayer.mock.invocationCallOrder[1];
+      const startOrder = ctx2.player.start.mock.invocationCallOrder[0];
+      expect(stopOrder).toBeLessThan(disposeOrder);
+      expect(disposeOrder).toBeLessThan(buildOrder);
+      expect(disposeOrder).toBeLessThan(startOrder);
+    });
+
     it("ignores stale events from a player after cleanup", async () => {
       const { result, unmount } = mount();
       await waitFor(() => expect(ctx.player.playLive).toHaveBeenCalled());
