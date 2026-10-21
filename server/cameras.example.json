@@ -1,0 +1,22 @@
+[
+  {
+    "id": "cam-01",
+    "externalId": "00000000-0000-4000-8000-000000000001",
+    "name": "Example camera 01",
+    "provider": "genetec",
+    "status": "online",
+    "lat": 6.2442,
+    "lng": -75.5812,
+    "ptz": false
+  },
+  {
+    "id": "cam-02",
+    "externalId": "00000000-0000-4000-8000-000000000002",
+    "name": "Example camera 02",
+    "provider": "genetec",
+    "status": "online",
+    "lat": 6.2501,
+    "lng": -75.5702,
+    "ptz": true
+  }
+]
